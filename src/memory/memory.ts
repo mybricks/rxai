@@ -19,5 +19,6 @@ export function getPrompts(): string {
 }
 
 export function register(args: RegisterOptions) {
+  debugger
   Register[args.name] = args
 }
