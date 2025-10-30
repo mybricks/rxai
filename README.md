@@ -1,6 +1,6 @@
-# @mybricks/layerAI
+# @mybricks/rxai
 
-> AI驱动的智能搭建引擎
-
+> 基于多Agents的智能任务引擎
+> 
 ## Usage
 
