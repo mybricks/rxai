@@ -1,0 +1,318 @@
+﻿/**
+ * MyBricks Opensource
+ * https://mybricks.world
+ * This source code is licensed under the MIT license.
+ *
+ * CheMingjun @2019
+ * mybricks@126.com
+ */
+@color-primary: var(--mybricks-color-primary, #FA6400);
+
+@color-secondary: #FFD1D6;
+
+@color-danger: #F55753;
+
+@color-success: #52c41a;
+@color-warning: #faad14;
+@color-error: #f5222d;
+
+
+@font-size-header: 14px; // 各类标题字号
+@font-size-content: 12px; // 主体内容字号
+
+@font-color-header: rgba(0, 0, 0, 0.85); // 各类标题文字颜色
+@font-color-content: rgba(0, 0, 0, 0.85); // 主体内容文字颜色
+@font-color-disabled: rgba(0, 0, 0, .25); // 失效文字颜色
+
+@border-radius: 4px; // 组件/浮层圆角
+//@box-shadow-primary: 0 0 3px 0 #bbb; // 浮层阴影
+@box-shadow-primary: 0 1px 3px 0 #bbb;
+@box-shadow-hover: 0 3px 6px rgba(208, 2, 27, 0.16), 0 3px 6px rgba(208, 2, 27, 0.23); // hover阴影
+
+//@box-shadow-popup: 0 1px 4px 2px rgba(39, 54, 78, 0.15);
+
+@popup-shadow: 0px 0px 1px rgba(0, 0, 0, .28), 0px 3px 8px rgba(0, 0, 0, .1), 0px 1px 3px rgba(0, 0, 0, .1);
+
+@border-radius: 6px;
+
+._scrollAuto(@x,@y) {
+  overflow-x: @x;
+  overflow-y: @y;
+
+  &::-webkit-scrollbar-thumb {
+    background-color: #FFF !important;
+  }
+
+  &:hover {
+    background: transparent;//防止没有激活
+    &::-webkit-scrollbar-thumb {
+      background-color: rgba(0, 0, 0, 0.3) !important;
+    }
+  }
+}
+
+@xx: 4px;
+
+._aiWorking, ._aiWorkingDone, ._aiWorkingError {
+  pointer-events: none;
+  position: absolute;
+  left: 0;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  overflow: hidden;
+  clip-path: polygon(0 0, /* 1. 左上外角 */ 100% 0, /* 2. 右上外角 */ 100% 100%, /* 3. 右下外角 */ 0 100%, /* 4. 左下外角 */ 0 0, /* 5. 返回左上外角 */ @xx @xx, /* 6. 左上内角 */ @xx calc(100% - @xx), /* 7. 左下内角 */ calc(100% - @xx) calc(100% - @xx), /* 8. 右下内角 */ calc(100% - @xx) @xx, /* 9. 右上内角 */ @xx @xx /* 10. 返回左上内角，闭合内部路径 */);
+  z-index: 1000;
+
+  &:before, &:after {
+    content: ' ';
+    position: absolute;
+    //border-radius: @border-radius;
+    overflow: hidden;
+    box-sizing: border-box;
+  }
+
+  &:after {
+    content: '';
+    position: absolute;
+    z-index: -1;
+    left: 3px;
+    top: 3px;
+    right: 3px;
+    bottom: 3px;
+    background: white;
+    animation: opacityChange 3s infinite alternate;
+  }
+}
+
+._aiWorking {
+  &:before {
+    content: '';
+    position: absolute;
+    z-index: -2;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+
+    //background-image: linear-gradient(#399953, #399953), linear-gradient(#fbb300, #fbb300), linear-gradient(#d53e33, #d53e33), linear-gradient(#377af5, #377af5);
+
+    background: radial-gradient(var(--mybricks-color-primary, #FA6400) 0%, var(--mybricks-color-primary, #FA6400) 10%, #00eef4 40%, #7539be 60%, #d519d2 70%, var(--mybricks-color-primary, #FA6400) 100%);
+    will-change: background-position;
+    background-size: 300% 300%;
+
+    animation: shining 4s linear infinite;
+  }
+}
+
+._aiWorkingCover {
+  pointer-events: visible !important;
+  position: absolute;
+  left: 2px;
+  top: 2px;
+  right: 2px;
+  bottom: 2px;
+  background: rgba(0, 0, 0, .25);
+  overflow: hidden;
+  z-index: 1000;
+
+  &:after {
+    padding: 2px 10px;
+    //background: #FFF;
+    text-shadow: 0 1px 3px 0 #FFF;
+    content: ' ';
+    color: #000;
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+  }
+}
+
+._aiWorkingDone {
+  &:before {
+    content: '';
+    position: absolute;
+    z-index: -2;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+
+    background: #0a7c05;
+  }
+}
+
+._aiWorkingError {
+  &:before {
+    content: '';
+    position: absolute;
+    z-index: -2;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+
+    background: linear-gradient(90deg, #FF0000 50%, #FFF 50%) repeat-x,
+    linear-gradient(90deg, rgba(255, 255, 255, .8) 50%, #FF0000 50%) repeat-x,
+    linear-gradient(0deg, rgba(255, 255, 255, .8) 50%, #FF0000 50%) repeat-y,
+    linear-gradient(0deg, rgba(255, 255, 255, .8) 50%, #FF0000 50%) repeat-y;
+    background-size: 2px 5px, 2px 5px, 5px 2px, 5px 2px;
+    background-position: 0 0, 0 100%, 0 0, 100% 0;
+  }
+}
+
+._aiToConfirm {
+  position: absolute;
+  z-index: 1000;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0, 0, 0, 1);
+  overflow: hidden;
+
+  > .preview {
+    width: 100%;
+    height: 100%;
+    opacity: 0.5;
+    pointer-events: none !important;
+  }
+
+  .btns {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    //flex-direction: column;
+
+    > div {
+      background: #FFF;
+      cursor: pointer !important;
+      padding: 2px 12px;
+      margin: 3px;
+      border-radius: @border-radius;
+    }
+
+    .apply {
+
+    }
+
+    .cancel {
+
+    }
+  }
+}
+
+@keyframes opacityChange {
+  50% {
+    opacity: 1;
+  }
+  100% {
+    // opacity: .5;
+  }
+}
+
+@keyframes shining {
+  0% {
+    background-position: -20% -20%;
+  }
+  25% {
+    background-position: 30% 80%;
+  }
+  50% {
+    background-position: 110% 110%;
+  }
+  75% {
+    background-position: 80% 30%;
+  }
+  to {
+    background-position: -20% -20%;
+  }
+}
+
+
+._aiShortcut {
+  box-shadow: 0 0 5px 1px rgba(39, 54, 78, 0.25);
+  background: radial-gradient(var(--mybricks-color-primary, #FA6400) 0%, #ef69c5 50%, #04d5fa 70%, var(--mybricks-color-primary, #FA6400) 100%);
+  animation: shining 20s linear infinite;
+  will-change: background-position;
+  background-size: 300% 300%;
+}
+
+.themesMenu {
+  pointer-events: auto;
+  position: absolute;
+  z-index: 1000 !important;
+  border-radius: 0 @border-radius @border-radius @border-radius;
+  width: 260px;
+  background: #FFF;
+  padding: 5px 5px;
+  box-shadow: @popup-shadow;
+  font-size: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  max-height: 250px;
+  overflow-y: auto;
+
+  .theme {
+    //height: 70px;
+    cursor: pointer;
+    padding: 5px 8px;
+    border-radius: @border-radius;
+    //margin: 5px 0;
+    display: flex;
+    flex-direction: column;
+    background-color: #FAFAFA;
+    //justify-content: space-between;
+
+    &:hover {
+      //background-color: #F5F5F5;
+      background: rgb(238, 238, 240);
+    }
+
+    * {
+      pointer-events: none;
+    }
+
+    .preview {
+      min-height: 45px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+
+      img {
+        max-height: 140px;
+        max-width: 230px;
+      }
+    }
+
+    .title {
+      text-align: center;
+      display: flex;
+      flex-direction: column;
+      margin-top: 5px;
+
+      //display:none;//临时隐藏
+
+      .title {
+        color: #AAA;
+        font-style: italic;
+      }
+
+      .time {
+        color: #AAA;
+        margin-top: 5px;
+      }
+    }
+  }
+
+  .focus {
+    outline: 1px solid @color-primary
+  }
+}
