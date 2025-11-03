@@ -1,45 +1,42 @@
 {
-  "name": "@mybricks/layer-ai",
-  "version": "1.0.0",
-  "description": "ai for mybricks",
-  "main": "index.js",
-  "types": "./types.d.ts",
+  "name": "@mybricks/rxai",
+  "version": "0.0.1",
+  "description": "基于多Agents的智能任务引擎",
+  "main": "dist/cjs/index.js",
+  "module": "dist/esm/index.js",
   "scripts": {
+    "build": "father build",
+    "prepublishOnly": "pnpm test && father doctor && pnpm build",
+    "test": "jest"
   },
-  "keywords": [
-    "mybricks"
+  "keywords": [],
+  "files": [
+    "dist"
   ],
   "author": "MyBricks Team",
   "license": "MIT",
-  "dependencies": {
-  },
-  "devDependencies": {
-    "react": "^18.2.0",
-    "react-dom": "^18.2.0",
-    "reflect-metadata": "^0.1.13",
-    "@babel/core": "^7.8.7",
-    "@babel/plugin-proposal-class-properties": "^7.8.3",
-    "@babel/preset-env": "^7.8.7",
-    "@babel/preset-react": "^7.8.3",
-    "@testing-library/react": "^11.2.5",
-    "@types/node": "^13.9.0",
-    "@types/react": "^18.0.21",
-    "@types/react-dom": "^18.0.6",
-    "babel-loader": "^8.0.6",
-    "core-js": "^2.6.11",
-    "jest": "^26.6.3",
-    "rimraf": "^2.6.2",
-    "ts-loader": "^6.2.1",
-    "typescript": "^3.8.3",
-    "webpack": "^4.42.0",
-    "webpack-bundle-analyzer": "^3.6.1",
-    "webpack-cli": "^3.3.11"
+  "publishConfig": {
+    "access": "public"
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/mybricks/rxui.git"
+    "url": "https://github.com/mybricks/rxai"
   },
-  "publishConfig": {
-    "registry": "https://registry.npmjs.org"
+  "devDependencies": {
+    "@eslint/js": "^9.23.0",
+    "@types/jest": "^29.5.14",
+    "eslint": "^9.23.0",
+    "eslint-config-prettier": "^10.1.1",
+    "eslint-plugin-prettier": "^5.2.5",
+    "father": "^4.5.2",
+    "globals": "^16.0.0",
+    "jest": "^29.7.0",
+    "ts-jest": "^29.3.1",
+    "ts-node": "^10.9.2",
+    "typescript-eslint": "^8.28.0"
+  },
+  "dependencies": {
+    "@babel/runtime": "^7.27.0",
+    "openai": "^6.7.0"
   }
 }
