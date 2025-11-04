@@ -1,5 +1,39 @@
 import { OpenAI } from "openai";
 
+interface StreamContext {
+  write(filename: string, data: string): void;
+  error(): void
+}
+
+interface StreamDelta {
+  text: string
+}
+
+export abstract class Tool {
+  name: string;
+  description: string;
+  systemPrompt: string;
+
+  constructor({
+    name,
+    description,
+    systemPrompt
+  }: {
+    name: string;
+    description: string;
+    systemPrompt: string;
+  }) {
+    this.name = name;
+    this.description = description;
+    this.systemPrompt = systemPrompt
+  }
+
+  abstract onStreamStart() : void
+  abstract onStreaming(delta: StreamDelta, streamContext: StreamContext) : void
+  abstract onStreamEnd(_: any, streamContext: StreamContext) : void
+  abstract onStreamError(error: Error, streamContext: StreamContext) : void
+} 
+
 export abstract class BaseTool {
   name: string;
   description: string;
