@@ -1,2 +1,2 @@
 export { Rxai } from "./agent/rxai";
-export { BaseTool } from "./tool/base";
+export { BaseTool, Tool } from "./tool/base";

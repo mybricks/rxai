@@ -2,6 +2,15 @@ import { Tool, RxToolContext, StreamDelta } from './base'
 
 class GeneratePage extends Tool {
 
+  constructor() {
+    super({
+      name: 'generate-page',
+      description: '根据组件使用文档和需求，生成 MyBricks 页面',
+      version: '1.0.0',
+      systemPrompt
+    })
+  }
+
   onStreaming(delta: StreamDelta, content: string, context: RxToolContext): void {
 
   }
@@ -720,6 +729,8 @@ const systemPrompt = () => `
 </examples>
 
 `
+
+export { GeneratePage }
 
 export default new GeneratePage({
   name: 'generate-page',

@@ -2,6 +2,15 @@ import { Tool, RxToolContext, StreamDelta } from './base'
 
 class GetComponentsDocAndPrd extends Tool {
 
+  constructor() {
+    super({
+      name: 'get-components-doc-and-prd',
+      description: '整理或扩写需求 + 按需获取组件文档，是各类组件操作（页面搭建、组件修改）的前置操作',
+      version: '1.0.0',
+      systemPrompt
+    })
+  }
+
   onStreaming(delta: StreamDelta, content: string, context: RxToolContext): void {
     
   }
@@ -456,6 +465,8 @@ const systemPrompt = `
   
 </examples>
 `
+
+export { GetComponentsDocAndPrd } 
 
 export default new GetComponentsDocAndPrd({
   name: 'get-components-doc-and-prd',
