@@ -1,38 +1,73 @@
 import { OpenAI } from "openai";
 
-interface StreamContext {
+export interface RxToolContext {
+  /** 读取上下文 */
+  read(filename: string): string;
+  /** 写入上下文 */
   write(filename: string, data: string): void;
-  error(): void
+  error(error: Error): void
+  /** 将内容作为大模型的返回值注入到当轮问答 */
+  // message(message: string): void
 }
 
-interface StreamDelta {
+export interface StreamDelta {
   text: string
 }
 
 export abstract class Tool {
   name: string;
   description: string;
-  systemPrompt: string;
+  version: string
+
+  private _systemPrompt: string | (() => string);
+  private isStreaming: boolean = false
+  private streamContent: string = ''
 
   constructor({
     name,
     description,
-    systemPrompt
+    systemPrompt,
+    version,
   }: {
     name: string;
     description: string;
-    systemPrompt: string;
+    systemPrompt: string | (() => string);
+    version: string;
   }) {
     this.name = name;
     this.description = description;
-    this.systemPrompt = systemPrompt
+    this._systemPrompt = systemPrompt;
+    this.version = version ?? '1.0.0';
   }
 
-  abstract onStreamStart() : void
-  abstract onStreaming(delta: StreamDelta, streamContext: StreamContext) : void
-  abstract onStreamEnd(_: any, streamContext: StreamContext) : void
-  abstract onStreamError(error: Error, streamContext: StreamContext) : void
-} 
+  public get systemPrompt() {
+    return typeof this._systemPrompt === 'function' ? this._systemPrompt() : this._systemPrompt;
+  }
+
+  streamStart(): void {
+    this.isStreaming = true;
+    this.streamContent = '';
+  }
+
+  streamError(error: Error, context: RxToolContext): void {
+    this.streamEnd?.(undefined, context);
+    context?.error(error);
+  }
+
+  streaming(delta: StreamDelta, context: RxToolContext): void {
+    this.streamContent += delta.text
+    this.onStreaming?.(delta, this.streamContent, context)
+  }
+
+  streamEnd(_: any, context: RxToolContext) : string {
+    this.isStreaming = false
+    return this.onStreamEnd?.(this.streamContent, context)
+  }
+
+  abstract onStreaming(delta: StreamDelta, content: string, context: RxToolContext): void;
+
+  abstract onStreamEnd(content: string, context: RxToolContext): string;
+}
 
 export abstract class BaseTool {
   name: string;
