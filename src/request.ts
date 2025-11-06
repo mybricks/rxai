@@ -16,9 +16,7 @@ interface Request {
   requestAsStream: (
     messages: ChatMessages,
     emits: Emits,
-    config: {
-      aiRole?: string;
-    },
+    extendParams: any,
   ) => void;
   getExtendParams?: (params: { messages: ChatMessages; tool?: Tool }) => any;
 }
