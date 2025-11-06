@@ -1,27 +1,306 @@
 import { Tool, RxToolContext, StreamDelta } from './base'
+import { parseFileBlocks } from './util'
 
-class GeneratePage extends Tool {
+interface Config {
+  path: string,
+  value: any,
+  style: any
+}
 
-  constructor() {
+
+interface AddChildActionParams {
+  namespace?: string
+  ns?: string,
+  layout?: any,
+  configs: Config[]
+}
+
+interface DoConfigActionParams {
+  path: string,
+  value: any
+}
+
+type ActionParams = AddChildActionParams | DoConfigActionParams
+
+interface Action {
+  comId: string,
+  type: string,
+  target: string,
+  params: ActionParams
+}
+
+const formatAction = (_action: string) => {
+  let action
+  try {
+    action = JSON.parse(_action);
+  } catch (error) {
+    console.log('error', error, _action)
+    try {
+      // const repairedAction = jsonrepair(_action)
+      // action = JSON.parse(repairedAction)
+    } catch (error) {
+      console.error('repair action error', error)
+    }
+  }
+
+  if (!Array.isArray(action)) {
+    return action
+  }
+
+  const [comId, target, type, params] = action;
+  const newAct: Action = {
+    comId,
+    type,
+    target,
+    params
+  }
+
+  // ns => namespace
+  if (newAct.type === 'addChild') {
+    if (newAct.params?.ns) {
+      newAct.params.namespace = newAct.params.ns;
+      delete newAct.params.ns
+    }
+  }
+
+  // absolute 布局的转化
+  if (newAct.params?.value?.display === 'absolute') {
+    newAct.params.value.position = 'smart'
+    delete newAct.params.value.display
+  }
+
+  // absolute 布局的转化
+  if (newAct.type === 'addChild' && Array.isArray(newAct.params?.configs)) {
+    newAct.params.configs.forEach(config => {
+      if (config?.value?.display === 'absolute') {
+        config.value.position = 'smart'
+        delete config.value.display
+      }
+
+      if (config?.style) {
+        // 兼容background
+        transformToValidBackground(config?.style)
+      }
+    })
+  }
+
+  // 对样式幻觉的兼容
+  if (newAct.type === 'doConfig' && newAct.params?.style) {
+    // 兼容background
+    transformToValidBackground(newAct.params?.style)
+  }
+  if (newAct.type === 'addChild' && newAct.params?.layout) {
+    // 兼容margin
+    transformToValidMargins(newAct.params?.layout)
+  }
+
+  return newAct
+
+}
+
+
+/** 
+ * 将background转换为有效的backgroundColor和backgroundImage
+ * @param styles 需要转换的样式对象
+ */
+function transformToValidBackground(styles: any): void {
+  // 兼容下把渐变色配置到backgroundColor的情况
+  if (styles?.backgroundColor && styles?.backgroundColor?.indexOf('gradient') > -1) {
+    const imageRegex = /(url\([^)]+\)|linear-gradient\([^)]+\)|radial-gradient\([^)]+\)|conic-gradient\([^)]+\))/;
+    const imageMatch = styles.backgroundColor.match(imageRegex);
+
+    if (imageMatch && !styles.backgroundImage) {
+      styles.backgroundImage = imageMatch[0];
+    }
+
+    delete styles.backgroundColor
+  }
+
+  // 如果没有background属性,直接返回
+  if (!styles.background) {
+    return;
+  }
+
+  const background = styles.background.toString();
+
+  // 提取颜色值
+  // 匹配颜色格式: #XXX, #XXXXXX, rgb(), rgba(), hsl(), hsla(), 颜色关键字
+  const colorRegex = /(#[0-9A-Fa-f]{3,6}|rgb\([^)]+\)|rgba\([^)]+\)|hsl\([^)]+\)|hsla\([^)]+\)|[a-zA-Z]+)/;
+  const colorMatch = background.match(colorRegex);
+
+  // 提取图片url或渐变
+  // 匹配url()或各种渐变函数
+  const imageRegex = /(url\([^)]+\)|linear-gradient\([^)]+\)|radial-gradient\([^)]+\)|conic-gradient\([^)]+\))/;
+  const imageMatch = background.match(imageRegex);
+
+  // 删除原有的background属性
+  delete styles.background;
+
+  // 如果找到颜色值,设置backgroundColor
+  if (colorMatch && !styles.backgroundColor) {
+    styles.backgroundColor = colorMatch[0];
+  }
+
+  // 如果找到图片或渐变,设置backgroundImage
+  if (imageMatch && !styles.backgroundImage) {
+    styles.backgroundImage = imageMatch[0];
+  }
+}
+
+/**
+ * 将margin简写转换为marginTop/Right/Bottom/Left
+ * @param styles 需要转换的样式对象
+ */
+function transformToValidMargins(styles: any): void {
+  // 如果没有margin属性,直接返回
+  if (!styles.margin) {
+    return;
+  }
+
+  const margin = styles.margin.toString().trim();
+  const values = margin.split(/\s+/); // 按空格分割
+
+  // 根据值的数量设置不同方向的margin
+  switch (values.length) {
+    case 1: // margin: 10px;
+      styles.marginTop = values[0];
+      styles.marginRight = values[0];
+      styles.marginBottom = values[0];
+      styles.marginLeft = values[0];
+      break;
+    case 2: // margin: 10px 20px;
+      styles.marginTop = values[0];
+      styles.marginRight = values[1];
+      styles.marginBottom = values[0];
+      styles.marginLeft = values[1];
+      break;
+    case 3: // margin: 10px 20px 30px;
+      styles.marginTop = values[0];
+      styles.marginRight = values[1];
+      styles.marginBottom = values[2];
+      styles.marginLeft = values[1];
+      break;
+    case 4: // margin: 10px 20px 30px 40px;
+      styles.marginTop = values[0];
+      styles.marginRight = values[1];
+      styles.marginBottom = values[2];
+      styles.marginLeft = values[3];
+      break;
+  }
+
+  // 删除原有的margin属性
+  delete styles.margin;
+}
+
+
+/**
+ * 创建actions解析器
+ * @returns {Function} 解析函数
+ */
+function createActionsParser() {
+  const processedLines = new Set();
+
+  return function parseActions(text: string) {
+    const newActions = [];
+    const lines = text.split('\n');
+
+    // 只处理除了最后一行之外的所有行（最后一行可能不完整）
+    const linesToProcess = lines.slice(0, -1);
+    const lastLine = lines[lines.length - 1];
+
+    // 处理完整的行
+    for (const line of linesToProcess) {
+      const trimmedLine = line.trim();
+
+      // 跳过空行和已处理的行
+      if (!trimmedLine || processedLines.has(trimmedLine)) {
+        continue;
+      }
+
+      try {
+        const parsedAction = formatAction(trimmedLine);
+        if (parsedAction.comId) {
+          newActions.push(parsedAction);
+          processedLines.add(trimmedLine);
+        }
+      } catch (error) {
+        // 这是真正的解析错误（完整的行但格式错误）
+        processedLines.add(trimmedLine); // 标记为已处理，避免重复尝试
+      }
+    }
+
+    // 检查最后一行是否完整（如果以换行符结尾，说明最后一行是空的）
+    if (lastLine && lastLine.trim() && text.endsWith('\n')) {
+      const trimmedLastLine = lastLine.trim();
+
+      if (!processedLines.has(trimmedLastLine)) {
+        try {
+          const parsedAction = formatAction(trimmedLastLine);
+          if (parsedAction.comId) {
+            newActions.push(parsedAction);
+            processedLines.add(trimmedLastLine);
+          }
+        } catch (error) {
+          processedLines.add(trimmedLastLine);
+        }
+      }
+    } else if (lastLine && lastLine.trim()) {
+      // 最后一行不完整，等待更多数据
+    }
+
+    return newActions;
+  };
+}
+
+interface GeneratePageToolParams {
+  /** 当前根组件信息 */
+  focusRootComponentDoc: string
+  /** 应用特殊上下文信息 */
+  contextDoc: string
+  /** 返回示例 */
+  examples: string
+}
+
+class GeneratePageTool extends Tool {
+
+  constructor(p: GeneratePageToolParams) {
     super({
       name: 'generate-page',
       description: '根据组件使用文档和需求，生成 MyBricks 页面',
       version: '1.0.0',
-      systemPrompt
+      systemPrompt: systemPrompt(p)
     })
   }
 
-  onStreaming(delta: StreamDelta, content: string, context: RxToolContext): void {
+  private actions: any[] = []
+  private actionsParser = createActionsParser();
 
+  private processStreaming = throttle((delta: StreamDelta, content: string, context: RxToolContext) => {
+    const file = parseFileBlocks(content);
+    const parsedActions = this.actionsParser(file?.[0]?.content ?? '')
+    this.actions = this.actions.concat(parsedActions)
+    parsedActions.forEach(action => {
+      console.log('单步action', action)
+    })
+  }, 1000);
+
+  onStreamStart() {
+    this.actions = []
+    this.actionsParser = createActionsParser();
+  }
+
+  onStreaming(delta: StreamDelta, content: string, context: RxToolContext): void {
+    this.processStreaming(delta, content, context);
   }
 
   onStreamEnd(content: string, context: RxToolContext): string {
+    console.log('所有action', this.actions)
     return content
   }
 
 }
 
-const systemPrompt = () => `
+const systemPrompt = ({ focusRootComponentDoc, contextDoc, examples }: GeneratePageToolParams) => `
 <你的角色与任务>
   你是MyBricks低代码平台（以下简称MyBricks平台或MyBricks）的资深页面搭建助手及客服专家，经验丰富、实事求是、逻辑严谨。
   你的任务是回答用户的各类问题，包括对当前页面的修改、以及对于用户提出的搭建需求给出思路及建议。
@@ -45,148 +324,16 @@ const systemPrompt = () => `
    - 如果附件中有图片，需要在搭建过程中作为重要的参考，要注意分辨设计稿（或者截图）或者用户绘制的线框图，对于前者、要求最大程度还原图片中的各项功能要素与视觉设计要素、可以做适度的创作发挥，总体要求考虑到功能一致完整与合理性、注意外观视觉美观大方、富有现代感.
 </特别注意>
 
-<关于MyBricks平台>
-
-  MyBricks是用来通过AI+可视化搭建的方式生成各类应用的生产力工具，用户可以与AI沟通、让AI搭建完成一部分内容，以及通过拖拽、配置等方式，快速搭建出各类应用。
-  
-  MyBricks主要由以下功能区域构成：
-  左侧的插件面板、中间的工作区（由UI面板、交互面板构成）、右侧的配置面板.
-  
-  **插件面板**
-  位于左侧，提供各类常用插件，主要包括：
-    - 连接器：用于配置应用的服务接口等，用户可以通过连接器配置应用的服务接口；
-    - 文件工具：可以导入、导出MyBricks文件；
-  
-  **UI面板**
-  位于工作区的上半部分，搭建并调试UI界面的工作区域，功能如下：
-    - 新建页面：左上角的“添加页面”按钮，可以新建页面；
-    - 查看当前页面的大纲：左上角的“#”按钮，可以查看当前聚焦页面中的组件列表；
-    - 调试：右上角的“调试”按钮，可以调试当前页面；
-    - 组件库面板：右上角的“添加组件与模块”按钮，可以打开组件库面板：
-      - 组件库面板可以查看所有可用的UI组件；
-      - 通过拖拽或点击组件到页面中，实现UI界面的搭建；
-      - 点击“添加组件库”，可以添加其他的组件库；
-      
-    - 对画布总体进行缩放：右上角的“缩放画布”，可以对画布进行缩放；
-  
-  **交互面板**
-  位于工作区的下半部分，用户可以通过拖拽、连线等方式，对组件进行逻辑编排，实现组件之间的数据交互；
-  
-  **配置面板**
-  位于右侧，用户可以通过配置面板对组件进行配置，包括组件的属性、样式等；
-  
-  在MyBricks的概念体系里，无论何种应用，从设计角度都可以拆分成：UI画布与交互编排两个主要部分，其中UI画布用于搭建UI界面，交互编排用于实现逻辑交互。
-  
-  <UI画布>
-   对于UI画布，主要由画布、页面、组件组成，一个应用由多个画布组成，一个画布由多个页面组成，一个页面由多个组件组成，以下是对这些概念的详细说明：
-   **画布**
-   画布是一组页面的集合，用户可以在画布上新建、删除页面，对页面进行排序等；
-   
-   **页面**
-   页面按照功能划分，分为页面、对话框、抽屉等类型，用户可以在页面上拖拽、配置组件，实现UI界面的搭建；
-   当前可以添加的页面类型包括：页面、对话框、抽屉、打印对话框、静默打印、更多模版...；
-   
-   **组件**
-   组件是UI界面的最小单元，用户可以在画布上拖拽组件，对组件进行配置，实现UI界面的搭建；
-    
-   注意：
-    - 页面中仅可添加UI组件(type=UI)，无法添加非UI组件、包括js、js-auto、Fx、变量等计算组件；
-    - 组件可以通过插槽包含其他的组件，例如布局容器的插槽中可以嵌套按钮组件，表单容器的插槽中可以嵌套输入框组件等；
-    - 没有插槽的组件无法嵌套添加其他的组件；
-  </UI画布>
- 
-  <交互编排>
-   对于交互编排，主要由各类交互卡片（类似流程图）构成，用户在这些交互卡片中可以对组件进行逻辑编排，以下是对这些概念的详细说明：
-
-   # 交互编排
-   > MyBricks基于数据流的方式，通过 输出项 连接到 输入项 的方式，实现数据交互；
-   
-     **输出项（output）**
-     数据流出的端口，输出项由id、title、schema等信息构成。
-      - 数据可能从交互卡片或者组件流出
-      - 组件有输出项、卡片也可能有输出项
-      - 组件的输出项往往对应某事件，例如按钮组件的点击事件，对应一个输出项
-     
-     **输入项（inputs）**
-     数据流入的端口，输入项由id、title、schema等信息构成.
-      - 数据可能从交互卡片或者组件流入
-      - 组件有输入项、卡片也可能有输入项
-
-     注意：
-      - 输出项只能与输入项进行连接
-      - 输出项无法添加任何组件，只能连接到组件的输入项
-     
-   # 交互卡片
-   > MyBricks提供了以下几类卡片：
-   
-     **页面卡片**
-     用于描述页面初始化（打开）时的交互流程，当页面打开时被触发；
-     - 页面卡片的输出项：打开
-        
-     **事件卡片**
-     用户描述组件的事件触发流程，当组件的事件触发时触发，例如按钮点击时触发
-     - 事件卡片一般有一个输出项；
-  </交互编排>
-
-
-  <MyBricks组件>
-     MyBricks组件是可视化搭建的基础，同时支持外部通过输入项(input)接收外部数据，或者通过输出项(output)与外界进行互动，
-     此外，还可以通过插槽(slot)包含其他内容，以及用户可以通过通过配置项进行手动配置编辑。
-  </MyBricks组件>
-
-</关于MyBricks平台>
-
 <当前根组件信息>
-
-  comId:_root_
-  
-  <组件_root_的插槽说明>
-    组件_root_有1个插槽:（当前布局为:smart布局）
-    [
-      {
-        "id": "_rootSlot_",
-        "title": "插槽"
-      }
-    ]
-  </组件_root_的插槽说明>
-  
-  <组件_root_可配置的内容>
-    当选中 :root(组件整体) 时：
-    [
-      {
-        "path": "root/标题",
-        "editType": "text",
-        "description": "配置_root_组件的标题",
-      },
-      
-  {
-    "path": "root/布局",
-    "editType": "layout",
-    "description": "页面内组件的布局方式"
-  },
-  {
-    "path": "root/样式",
-    "editType": "styleNew",
-    "description": "设置背景颜色及背景图片"
-  }
-
-    ]
-  </组件_root_可配置的内容>
-    
-
-  注意：
-    - _root_ 代表当前的根组件，_rootSlot_ 代表当前根组件的插槽；
-    - 仅需要用到当前根组件或当前根组件的插槽时，才使用_root_或_rootSlot_，否则使用具体的组件id或插槽id；
+${focusRootComponentDoc}
 </当前根组件信息>
 
 <如何搭建以及修改>
-  实际上，在手动搭建过程中，通过一系列的action来分步骤完成对于面向组件或其中插槽的添加及修改，下面的actions.json 即通过模拟用户行为的方式来完成页面的搭建或修改。
-  当需要完成页面搭建或修改时，你需要按照如下格式返回actions.json文件：
+  实际上，在手动搭建过程中，通过一系列的action来分步骤完成对于面向组件或其中插槽的添加及修改，下面的actions文件即通过模拟用户行为的方式来完成页面的搭建或修改。
+  当需要完成页面搭建或修改时，你需要按照如下格式返回actions操作步骤文件：
   
-  \`\`\`json file="actions.json"
-    [
-      [comId, target, type, params]
-    ]
+  \`\`\`json type="actions" file="操作步骤.json"
+  [comId, target, type, params]
   \`\`\`
 
   <关于actions>
@@ -254,10 +401,8 @@ const systemPrompt = () => `
       }
       
       例如，当用户要求将当前组件的宽度设置为200px，可以返回以下内容：
-      \`\`\`json file="actions.json"
-      [
-        ["u_ou1rs",":root","setLayout",{"width":200}]
-      ]
+      \`\`\`json type="actions" file="修改组件宽度.json"
+      ["u_ou1rs",":root","setLayout",{"width":200}]
       \`\`\`
       
       注意：当需要修改布局和尺寸信息时，仅返回用户要求的内容即可，无需返回所有的布局和尺寸信息属性。
@@ -287,17 +432,13 @@ const systemPrompt = () => `
       
       例如：
       - 属性的配置：
-      \`\`\`json file="actions.json"
-      [
-        ["u_ou1rs",":root","doConfig",{"path":"常规/标题","value":"标题内容"}]
-      ]
+      \`\`\`json type="actions" file="属性配置步骤.json"
+      ["u_ou1rs",":root","doConfig",{"path":"常规/标题","value":"标题内容"}]
       \`\`\`
       
       - 样式的配置：
-      \`\`\`json file="actions.json"
-      [
-        ["u_ou1rs",":root","doConfig",{"path":"常规/banner样式","style":{"backgroundColor":"red"}}]
-      ]
+      \`\`\`json type="actions" file="样式配置步骤.json"
+      ["u_ou1rs",":root","doConfig",{"path":"常规/banner样式","style":{"backgroundColor":"red"}}]
       \`\`\`
       
         注意：
@@ -326,31 +467,24 @@ const systemPrompt = () => `
       \`\`\`
       
       例如：
-      \`\`\`json file="actions.json"
-      [
-        ["u_ou1rs","content","addChild",{"title":"添加的文本组件","ns":"namespace占位","comId":"u_iiusd7"}]
-      ]
+      \`\`\`json type="actions" file="添加文本组件步骤.json"
+      ["u_ou1rs","content","addChild",{"title":"添加的文本组件","ns":"namespace占位","comId":"u_iiusd7"}]
       \`\`\`
   
-      \`\`\`json file="actions.json"
-      [
-        ["u_ou1rs","content","addChild",{"title":"背景图","ns":"namespace占位","comId":"u_iiusd7","layout":{"width":"100%","height":200,"marginTop":8,"marginLeft":12,"marginRight":12},"configs":[{"path":"常规/图片地址","value":"https://ai.mybricks.world/image-search?term=风景"},{"path":"样式/图片","style":{"borderRadius":"8px"}}]}]
-      ]
+      \`\`\`json type="actions" file="添加带配置属性的步骤.json"
+      ["u_ou1rs","content","addChild",{"title":"背景图","ns":"namespace占位","comId":"u_iiusd7","layout":{"width":"100%","height":200,"marginTop":8,"marginLeft":12,"marginRight":12},"configs":[{"path":"常规/图片地址","value":"https://ai.mybricks.world/image-search?term=风景"},{"path":"样式/图片","style":{"borderRadius":"8px"}}]}]
       \`\`\`
   
-      \`\`\`json file="actions.json"
-      [
-        ["u_ou1rs","content","addChild",{"title":"添加的布局组件","ns":"namespace占位","comId":"u_iiusd7","ignore": true}] // 配置ignore
-      ]
+      \`\`\`json type="actions" file="添加带ignore标记的步骤.json"
+      ["u_ou1rs","content","addChild",{"title":"添加的布局组件","ns":"namespace占位","comId":"u_iiusd7","ignore": true}] // 配置ignore
       \`\`\`
   
       注意:
         - 要充分考虑被添加的组件与其他组件之间的间距以及位置关系，确保添加的组件的美观度的同时、且不会与其他组件重叠或冲突；
     </addChild>
   
-    注意：actions.json文件采用标准的 JSON 语法，禁止非法代码，禁止出现内容省略提示、单行注释、省略字符。
-      - actions.json返回的内容格式需要一行一个action，每一个action需要压缩，不要包含缩进等多余的空白字符；
-      - 内容必须完全符合 JSON 规范
+    注意：actions文件每一行遵循 JSON 语法，禁止非法代码，禁止出现内容省略提示、单行注释、省略字符。
+      - actions返回的内容格式需要一行一个action，每一个action需要压缩，不要包含缩进等多余的空白字符；
       - 禁止包含任何注释（包括单行//和多行/* */）
       - 禁止出现省略号(...)或任何占位符
       - 确保所有代码都是完整可执行的，不包含示例片段
@@ -366,7 +500,7 @@ const systemPrompt = () => `
     组件id可以从上下文中获取。
    
     注意：
-      - 返回actions.json文件内容时，务必注意操作步骤的先后顺序；
+      - 返回actions文件内容时，务必注意操作步骤的先后顺序；
         - 有些操作需要在前面操作完成后才能进行；
         - 有些操作需要在其他操作开启（布尔类型的配置项）后才能进行；
       - 禁止重复使用相同的action；
@@ -389,10 +523,8 @@ const systemPrompt = () => `
         - fixed定位的组件不允许使用margin；
       
         使用fixed定位的例子:
-          \`\`\`json file="actions.json"
-          [
-            ["_root_","_rootSlot_","addChild",{"title":"添加一个固定定位组件","comId":"u_fixed","ns":"组件","layout":{"position":"fixed","width":"100%","height":84,"bottom":0,"left":0},"configs":[]}]
-          ]
+          \`\`\`json type="actions" file="添加一个fixed定位组件.json"
+          ["_root_","_rootSlot_","addChild",{"title":"添加一个固定定位组件","comId":"u_fixed","ns":"组件","layout":{"position":"fixed","width":"100%","height":84,"bottom":0,"left":0},"configs":[]}]
           \`\`\`
 
       在插槽的不同布局下，组件的定位由所在插槽的布局方式决定：
@@ -418,11 +550,9 @@ const systemPrompt = () => `
         - 3. 如果布局组件的父组件不是布局组件，或者是根组件，不能添加ignore标记，不能被优化掉；
 
         例子：第一个布局组件仅承担布局功能，可以添加ignore标记；第二个布局组件承担样式功能，不能添加ignore标记。
-        \`\`\`json file="actions.json"
-        [
-          ["目标组件id","插槽id占位","addChild",{"title":"添加一个布局组件","comId":"u_layout","ignore":true,"ns":"组件","layout":{"width":"100%","height":120},"configs":[{"path":"常规/布局","value":{"display":"flex","flexDirection":"row","alignItems":"center"}}]}]
-          ["目标组件id","插槽id占位","addChild",{"title":"添加一个布局组件","comId":"u_layout","ns":"组件","layout":{"width":"100%","height":120},"configs":[{"path":"常规/布局","value":{"display":"flex","flexDirection":"row","alignItems":"center"}},{"path":"样式/样式","style":{"background":"#FFFFFF"}}]}]
-        ]
+        \`\`\`json type="actions" file="辅助标记.json"
+        ["目标组件id","插槽id占位","addChild",{"title":"添加一个布局组件","comId":"u_layout","ignore":true,"ns":"组件","layout":{"width":"100%","height":120},"configs":[{"path":"常规/布局","value":{"display":"flex","flexDirection":"row","alignItems":"center"}}]}]
+        ["目标组件id","插槽id占位","addChild",{"title":"添加一个布局组件","comId":"u_layout","ns":"组件","layout":{"width":"100%","height":120},"configs":[{"path":"常规/布局","value":{"display":"flex","flexDirection":"row","alignItems":"center"}},{"path":"样式/样式","style":{"background":"#FFFFFF"}}]}]
         \`\`\`
       </辅助标记使用>
   
@@ -431,12 +561,10 @@ const systemPrompt = () => `
           子组件通过嵌套来搭建，无需考虑子组件的宽度和高度。
 
           下面的例子使用flex实现左侧固定宽度，右侧自适应布局:
-          \`\`\`json file="actions.json"
-          [
-            ["目标组件id","插槽id占位","addChild",{"title":"添加一个布局组件","comId":"u_flex1","ns":"布局组件","layout":{"width":"100%","height":60},"configs":[{"path":"常规/布局","value":{"display":"flex","flexDirection":"row","alignItems":"center"}}]}],
-            ["u_flex1","插槽id占位","addChild",{"title":"左侧固定宽度组件","comId":"u_leftFixed","ns":"组件","layout":{"width":60,"height":40,"marginRight":8},"configs":[]}],
-            ["u_flex1","插槽id占位","addChild",{"title":"右侧自适应组件","comId":"u_rightFlex","ns":"组件","layout":{"width":'100%',"height":40},"configs":[]}]
-          ]
+          \`\`\`json type="actions" file="左侧固定右侧自适应.json"
+          ["目标组件id","插槽id占位","addChild",{"title":"添加一个布局组件","comId":"u_flex1","ns":"布局组件","layout":{"width":"100%","height":60},"configs":[{"path":"常规/布局","value":{"display":"flex","flexDirection":"row","alignItems":"center"}}]}]
+          ["u_flex1","插槽id占位","addChild",{"title":"左侧固定宽度组件","comId":"u_leftFixed","ns":"组件","layout":{"width":60,"height":40,"marginRight":8},"configs":[]}]
+          ["u_flex1","插槽id占位","addChild",{"title":"右侧自适应组件","comId":"u_rightFlex","ns":"组件","layout":{"width":'100%',"height":40},"configs":[]}]
           \`\`\`
           在上例中:
             - 声明布局编辑器的值，注意布局编辑器必须声明，其中flexDirection也必须声明，关注justifyContent效果，默认为flex-start；
@@ -445,14 +573,12 @@ const systemPrompt = () => `
           
           
           下面的例子使用flex进行嵌套，来实现左侧图标+文本，右侧箭头的布局:
-          \`\`\`json file="actions.json"
-          [
-            ["目标组件id","插槽id占位","addChild",{"title":"添加一个布局组件","comId":"u_flex1","ns":"布局组件","layout":{"width":"100%","height":60},"configs":[{"path":"常规/布局","value":{"display":"flex","flexDirection":"row","justifyContent":"space-between","alignItems":"center"}}]}],
-            ["u_flex1","插槽id占位","addChild",{"title":"左侧布局组件","comId":"u_leftLayout","ignore": true,"ns":"布局组件","layout":{"width":"fit-content","height":"fit-content"},"configs":[{"path":"常规/布局","value":{"display":"flex","flexDirection":"row","alignItems":"center", "justifyContent": "flex-start"}}]}],
-            ["u_leftLayout","插槽id占位","addChild",{"title":"图标组件","comId":"u_icon","ns":"图标组件","layout":{"width":24,"height":24,"marginRight":8},"configs":[]}],
-            ["u_leftLayout","插槽id占位","addChild",{"title":"文本组件","comId":"u_text","ns":"文本组件","layout":{"width":"fit-content","height":"fit-content"},"configs":[]}],
-            ["u_flex1","插槽id占位","addChild",{"title":"箭头图标组件","comId":"u_arrowIcon","ns":"图标组件","layout":{"width":24,"height":24},"configs":[]}]
-          ]
+          \`\`\`json type="actions" file="flex嵌套实现左右布局.json"
+          ["目标组件id","插槽id占位","addChild",{"title":"添加一个布局组件","comId":"u_flex1","ns":"布局组件","layout":{"width":"100%","height":60},"configs":[{"path":"常规/布局","value":{"display":"flex","flexDirection":"row","justifyContent":"space-between","alignItems":"center"}}]}]
+          ["u_flex1","插槽id占位","addChild",{"title":"左侧布局组件","comId":"u_leftLayout","ignore": true,"ns":"布局组件","layout":{"width":"fit-content","height":"fit-content"},"configs":[{"path":"常规/布局","value":{"display":"flex","flexDirection":"row","alignItems":"center", "justifyContent": "flex-start"}}]}]
+          ["u_leftLayout","插槽id占位","addChild",{"title":"图标组件","comId":"u_icon","ns":"图标组件","layout":{"width":24,"height":24,"marginRight":8},"configs":[]}]
+          ["u_leftLayout","插槽id占位","addChild",{"title":"文本组件","comId":"u_text","ns":"文本组件","layout":{"width":"fit-content","height":"fit-content"},"configs":[]}]
+          ["u_flex1","插槽id占位","addChild",{"title":"箭头图标组件","comId":"u_arrowIcon","ns":"图标组件","layout":{"width":24,"height":24},"configs":[]}]
           \`\`\`
           在上例中:
             - 声明布局编辑器的值，注意布局编辑器必须声明，其中flexDirection也必须声明；
@@ -460,24 +586,20 @@ const systemPrompt = () => `
             - 左侧的图标+文本使用嵌套布局实现，且添加ignore标记，表示仅承担布局功能；
 
           下面的例子使用flex实现垂直居中布局:
-          \`\`\`json file="actions.json"
-          [
-            ["目标组件id","插槽id占位","addChild",{"title":"添加一个布局组件","comId":"u_flex2","ns":"布局组件","layout":{"width":"100%","height":120},"configs":[{"path":"常规/布局","value":{"display":"flex","flexDirection":"column","alignItems":"center"}}]}],
-            ["u_flex2","插槽id占位","addChild",{"title":"子组件","comId":"u_child","ns":"组件","layout":{"width":80,"height":80},"configs":[]}]
-          ]
+          \`\`\`json type="actions" file="垂直居中布局.json"
+          ["目标组件id","插槽id占位","addChild",{"title":"添加一个布局组件","comId":"u_flex2","ns":"布局组件","layout":{"width":"100%","height":120},"configs":[{"path":"常规/布局","value":{"display":"flex","flexDirection":"column","alignItems":"center"}}]}]
+          ["u_flex2","插槽id占位","addChild",{"title":"子组件","comId":"u_child","ns":"组件","layout":{"width":80,"height":80},"configs":[]}]
           \`\`\`
           在上例中:
             - 声明布局编辑器的值，注意布局编辑器必须声明，其中flexDirection声明成column；
             - 通过alignItems来实现子组件的垂直居中； 
 
           下面的例子使用flex进行横向均分或等分布局，实现一行N列的效果:
-          \`\`\`json file="actions.json"
-          [
-            ["目标组件id","插槽id占位","addChild",{"title":"添加一个布局组件","comId":"u_flex0","ignore": true,"ns":"布局组件","layout":{"width":"100%","height":120},"configs":[{"path":"常规/布局","value":{"display":"flex","flexDirection":"row","justifyContent":"space-between","alignItems":"center"}}]}],
-            ["u_flex0","插槽id占位","addChild",{"title":"A组件","comId":"u_a","ns":"组件","layout":{"width":40,"height":40},"configs":[]}],
-            ["u_flex0","插槽id占位","addChild",{"title":"B组件","comId":"u_b","ns":"组件","layout":{"width":40,"height":40},"configs":[]}],
-            ["u_flex0","插槽id占位","addChild",{"title":"C组件","comId":"u_c","ns":"组件","layout":{"width":40,"height":40},"configs":[]}]
-          ]
+          \`\`\`json type="actions" file="一行N列布局.json"
+          ["目标组件id","插槽id占位","addChild",{"title":"添加一个布局组件","comId":"u_flex0","ignore": true,"ns":"布局组件","layout":{"width":"100%","height":120},"configs":[{"path":"常规/布局","value":{"display":"flex","flexDirection":"row","justifyContent":"space-between","alignItems":"center"}}]}]
+          ["u_flex0","插槽id占位","addChild",{"title":"A组件","comId":"u_a","ns":"组件","layout":{"width":40,"height":40},"configs":[]}]
+          ["u_flex0","插槽id占位","addChild",{"title":"B组件","comId":"u_b","ns":"组件","layout":{"width":40,"height":40},"configs":[]}]
+          ["u_flex0","插槽id占位","addChild",{"title":"C组件","comId":"u_c","ns":"组件","layout":{"width":40,"height":40},"configs":[]}]
           \`\`\`
           在上例中:
             - 声明布局编辑器的值，注意布局编辑器必须声明，其中flexDirection也必须声明；
@@ -486,12 +608,10 @@ const systemPrompt = () => `
             - 判断仅布局，添加ignore标记，优化搭建内容。
 
           特殊地，在flex布局中的元素还可以配置position=absolute，用于实现绝对定位效果:
-          \`\`\`json file="actions.json"
-          [
-            ["目标组件id","插槽id占位","addChild",{"title":"添加一个布局组件","comId":"u_flex3","ns":"布局组件","layout":{"width":"100%","height":200},"configs":[{"path":"常规/布局","value":{"display":"flex","flexDirection":"row","alignItems":"center"}}]}],
-            ["u_flex3","插槽id占位","addChild",{"title":"绝对定位组件","comId":"u_absolute","ns":"组件","layout":{"position":"absolute","width":100,"height":40,"top":20,"left":20},"configs":[]}],
-            ["u_flex3","插槽id占位","addChild",{"title":"普通组件","comId":"u_normal","ns":"组件","layout":{"width":80,"height":80},"configs":[]}]
-          ]
+          \`\`\`json type="actions" file="绝对定位效果.json"
+          ["目标组件id","插槽id占位","addChild",{"title":"添加一个布局组件","comId":"u_flex3","ns":"布局组件","layout":{"width":"100%","height":200},"configs":[{"path":"常规/布局","value":{"display":"flex","flexDirection":"row","alignItems":"center"}}]}]
+          ["u_flex3","插槽id占位","addChild",{"title":"绝对定位组件","comId":"u_absolute","ns":"组件","layout":{"position":"absolute","width":100,"height":40,"top":20,"left":20},"configs":[]}]
+          ["u_flex3","插槽id占位","addChild",{"title":"普通组件","comId":"u_normal","ns":"组件","layout":{"width":80,"height":80},"configs":[]}]
           \`\`\`
           在上例中:
             - 声明布局编辑器的值，注意布局编辑器必须声明，其中flexDirection也必须声明；
@@ -528,30 +648,7 @@ const systemPrompt = () => `
   </UI搭建原则>
 </如何搭建以及修改>
 
-<对于当前搭建有以下特殊上下文>
-  <搭建画布信息>
-    当前搭建画布的宽度为1024，所有元素的尺寸需要关注此信息，且尽可能自适应布局。1024只是在MyBricks搭建时的画布宽度，实际运行时可能会更宽。
-    
-    搭建内容必须参考PC端网站进行设计，内容必须考虑左右排列的丰富度，以及以下PC的特性
-      比如:
-        1. 布局需要自适应画布宽度，实际运行的电脑宽度不固定；
-        2. 宽度和间距配置的时候要注意，画布只有1024，特别注意总宽度不可以超过1024；
-        3. 页面可以配置backgroundColor；
-    搭建风格也要尽可能贴合中国网站的设计风格；
-  </搭建画布信息>
-
-  <允许使用的图标>
-  antd中的图标
-  </允许使用的图标>
-
-  <返回的文件格式>
-  必须为\`\`\`json file="actions.json" \`\`\`格式的操作列表，注意格式为符合Json规范的数组格式，其中 file="actions.json" 不可省略，否则无法区分。
-  </返回的文件格式>
-
-  <对于图片或原型>
-    可能会存在明显异于UI的评论、标注信息，注意筛选后去除。
-  </对于图片或原型>
-</对于当前搭建有以下特殊上下文>
+${contextDoc}
 
 <按照以下情况分别处理>
   请根据以下情况逐步思考给出答案，首先，判断需求属于以下哪种情况：
@@ -599,8 +696,8 @@ const systemPrompt = () => `
       - 数据(data):根据【知识库】中该组件的data声明进行实现，尤其要注意：
         - 使用图片：如果data中需要给出新的图片，否则一律使用https://ai.mybricks.world/image-search?term={关键词}&w={图片宽度}&h={图片高度}做代替，不允许使用base64或者其他的；
 
-    4、最后，返回页面更新后的actions.json文件内容，注意：
-      - 内容严格符合 JSON 规范
+    4、最后，返回页面更新后的actions操作步骤文件内容，注意：
+      - 每一个action符合JSON规范，每一行为一个action
       - 禁止包含任何注释（包括单行//和多行/* */）
       - 禁止出现省略号(...)或任何占位符
       - 确保所有代码都是完整可执行的，不包含示例片段
@@ -619,122 +716,50 @@ const systemPrompt = () => `
 
 <examples>
 
-  <example>
-    <user_query>搭建一个云服务器管理中后台页面</user_query>
-    <assistant_response>
-      基于用户当前的选择上下文，我们来实现一个云服务器管理中后台页面，思考过程如下：
-
-      任何时刻，必须先确认_root_的布局，根据需求，我们配置flex垂直布局；
-      
-      首先，这是一个典型的，左侧侧边，右边顶部 + 内容的中后台界面，我们首先来分析和设计页面级布局：
-        整个页面可以从根组件上可以分为左右两个部分，左侧固定宽度，右侧自适应拉伸（从画布上体现则是1024 - 左侧宽度）。
-        直接用grid组件来实现
-          - 添加一个一行两列布局，左侧固定200宽度，右侧拉伸，同时配置合理的间距；
-          - 自身设置height=fit-content适应flex内容的高度，宽度设置100%，方便画布宽度的调整；
-          - 行列的间距使用子组件的margin来实现，左侧容器就设置了marginRight=12，不要遗漏；
-      接下来，左右分别从上往下开始使用flex布局，按照从上往下的搭建方式进行搭建
-        左侧从上往下，是Logo和网站信息 + 侧边栏
-        - Logo和网站，图文编排，我们使用布局嵌套文本和图标
-        - 侧边栏使用菜单组件配置
-        右侧从上往下，需要配置每个区块的间距，其中从上往下分为三个部分
-        - 顶部是个人信息，一些图文编排场景；
-        - 中部是卡片概览，一行三列等分，我们使用一个自定义容器来均分三列；
-        - 底部是表格，表格外使用自定义容器配置背景和圆角，内部使用表格配置多列，并且配置合理的分页信息
-
-      \`\`\`json file="actions.json"
-      [
-        ["_root_",":root","doConfig",{"path":"root/样式","style":{"background":"#f5f5f5"}}],
-        ["_root_",":root","doConfig",{"path":"root/布局","value":{"display":"flex", "flexDirection": "column"}}],
-        ["_root_","_rootSlot_","addChild",{"title": "页面布局", "ns": "mybricks.basic-comlib.antd5.grid", "comId": "u_page", "layout": {"width": "100%", "height": "fit-content"}, configs: [{"path": "常规/行列数据", "value": [{ "key": "row1", "cols": [{ "key": "col1", "width": 200 }, { "key": "col2", "width": "auto" }] }] }] }],
-        ["u_page","col1","addChild",{"title":"左侧容器","ns":"mybricks.normal-pc.antd5.custom-container","comId":"u_left","layout":{"width":"100%","height":'fit-content',"marginRight":12},"configs":[{"path":"常规/布局","value":{"display":"flex", "flexDirection": "column"}}]}],
-        ["u_left","content","addChild", Logo和网站],
-        ["u_left","content","addChild", 侧边栏],
-        ["u_page","col2","addChild",{"title":"右侧容器","ns":"mybricks.normal-pc.antd5.custom-container","comId":"u_right","layout":{"width":"100%","height":'fit-content'},"configs":[{"path":"常规/布局","value":{"display":"flex", "flexDirection": "column"}}]}]
-        ["u_right","content","addChild", 顶部个人信息],
-        ["u_right","content","addChild", 卡片概览],
-        ["u_right","content","addChild", 底部表格]
-      ]
-      \`\`\`
-    
-    在上述内容中：
-    我们遵循了以下关键事项：
-    流程：从「根组件布局设计」-> 「考虑是否使用grid布局」-> 从上往下分区开始搭建内容。
-    布局规则：
-      1. 页面级布局，通过画布的宽度和grid组件完成了这类复杂页面布局；
-      2. 注意容器从上往下排列时的margin间距；
-    </assistant_response>
-  </example>
-
-  <example>
-    <user_query>搭建一个博客详情页</user_query>
-    <assistant_response>
-      基于用户当前的选择上下文，我们来实现一个博客详情页面，思考过程如下：
-
-      任何时刻，必须先确认_root_的布局，根据需求，我们配置flex垂直布局；
-      
-      首先，这是一个典型的，从上往下排列的页面，我们首先来分析和设计页面级布局：
-        整个页面没有复杂的左右布局等，可以直接设置根组件的布局为flex垂直布局，同时配置合理的间距，从上往下一一实现即可
-      接下来，从上往下开始搭建
-        顶部导航，使用横向flex布局，嵌套左侧菜单和右侧头像昵称区域，其中：
-          - 将左侧菜单设置自适应宽度width=100%，右侧头像昵称区域设置width=fit-content，保证整体为自适应效果；
-          - 同时关注margin信息，左右的内容内容配置12间距，顶部导航组件配置下方的24间距；
-        文档的详情内容，其中
-          - 文章头部的高度设置fit-content，保证头部内容能完整展示；
-          - 文章内容直接使用flex纵向布局，保证内容增长时容器变高；
-        
-      \`\`\`json file="actions.json"
-      [
-        ["_root_",":root","doConfig",{"path":"root/样式","style":{"background":"#f5f5f5"}}],
-        ["_root_",":root","doConfig",{"path":"root/布局","value":{"display":"flex", "flexDirection": "column"}}],
-        ["_root_","_rootSlot_","addChild",{"title": "顶部导航", "ns": "mybricks.normal-pc.antd5.custom-container", "comId": "u_navs", "layout": {"width": "100%", "height": 60, "marginBottom": 24}, configs: [{"path":"常规/布局","value":{"display":"flex", "flexDirection": "row", "alignItems": "center", "justifyContent": "space-between"}}] }],
-        ["u_navs","content","addChild", {"title": "左侧菜单", "ns": "菜单", "comId": "u_leftMenu", "layout": {"width": '100%', "height": 'fit-content', "marginLeft": 12}, configs: [] }],
-        ["u_navs","content","addChild", {"title": "右侧头像昵称区域", "ns": "mybricks.normal-pc.antd5.custom-container", "comId": "u_rightProfile", "layout": {"width": 'fit-content', "height": '100%', "marginRight": 12}, configs: [{"path":"常规/布局","value":{"display":"flex", "flexDirection": "row", "alignItems": "center", "justifyContent": "flex-end"}}] }],
-        ["_root_","_rootSlot_","addChild",{"title": "详情内容", "ns": "mybricks.normal-pc.antd5.custom-container", "comId": "u_detail", "layout": {"width": "100%", "height": 'fit-content', marginTop: 12, marginLeft: 12, marginRight: 12}, configs: [{"path":"常规/布局","value":{"display":"flex", "flexDirection": "column"}}] }],
-        ["u_detail","content","addChild",{"title": "文章头部", "ns": "mybricks.normal-pc.antd5.custom-container", "comId": "u_header", "layout": {"width": "100%", "height": fit-content'}, configs: [{"path":"常规/布局","value":{"display":"flex", "flexDirection": "column"}}] }],
-        ["u_detail","content","addChild",{"title": "文章内容", "ns": "mybricks.normal-pc.antd5.custom-container", "comId": "u_header", "layout": {"width": "100%", "height": 'fit-content', marginTop: 20}, configs: [{"path":"常规/布局","value":{"display":"flex", "flexDirection": "column"}}] }],
-        // ...
-      ]
-      \`\`\`
-    
-    在上述内容中：
-    我们遵循了以下关键事项：
-    流程：从「根组件布局设计」-> 「考虑是否使用grid布局」-> 从上往下开始搭建内容。
-    布局规则：
-      1. 给每一个容器显式声明布局，同时合理使用 flex布局 和 height=fit-content；
-      2. 注意各类margin间距，顶部导航和下方详情内容是有间距的；
-      3. 顶部导航往往内容垂直居中，配置alignItems=center 同时考虑画布大小，如果内容过多，内容要斟酌使用width=100%来自适应宽度；
-    </assistant_response>
-  </example>
-
-  <example>
-    <user_query>添加一个一行三列的导航</user_query>
-    <assistant_response>
-      好的，一行三列的导航考察的是我们布局的关键知识，一行三列，就是均分布局，均分我们一般选择使用flex布局。
-      所以提供一个flex容器，确定子组件的宽度，并将内容平铺上去。
-      
-     \`\`\`json file="actions.json"
-      [
-        ["_root_",":root","doConfig",{"path":"root/标题","value":"一行三列的导航"}],
-        ["_root_",":root","doConfig",{"path":"root/布局","value":{"display":"flex","flexDirection":"column","alignItems":"center"}}],
-        ["_root_","_rootSlot_","addChild",{"title":"Flex容器","ns":"some.container","comId":"u_iiusd7","layout":{"width":"100%","height":200,"marginLeft":8,"marginRight":8},"configs":[{"path":"常规/布局","value":{"display":"flex","flexDirection":"row","justifyContent":"space-between","alignItems":"center","flexWrap":"wrap"}}]}],
-        ["u_iiusd7","content","addChild",{"title":"导航1","ns":"some.icon","comId":"u_icon1","layout":{"width":120,"height":120,"marginTop":8},"configs":[{"path":"样式/文本","style":{"background":"#0000FF"}}]}],
-      ]
-    \`\`\`
-
-    注意：
-      - 这个Flex容器是根组件的直接子组件，所以不允许添加ignore标记。
-    </assistant_response>
-  </example>
+${examples}
   
 </examples>
 
 `
 
-export { GeneratePage }
+export const GeneratePage = (params: GeneratePageToolParams) => {
+  return () => new GeneratePageTool(params)
+}
 
-export default new GeneratePage({
-  name: 'generate-page',
-  description: '根据组件使用文档和需求，生成 MyBricks 页面',
-  version: '1.0.0',
-  systemPrompt
-})
+function throttle<T extends (...args: any[]) => any>(
+  func: T,
+  wait: number
+): T & { cancel: () => void } {
+  let timeout: number | null = null;
+  let pendingArgs: Parameters<T> | null = null;
+
+  const throttled = function (this: any, ...args: Parameters<T>) {
+    // 保存最新的参数
+    pendingArgs = args;
+
+    // 如果已经有定时器在运行，直接返回
+    if (timeout) {
+      return;
+    }
+
+    // 设置节流定时器
+    timeout = setTimeout(() => {
+      if (pendingArgs) {
+        func.apply(this, pendingArgs);
+        pendingArgs = null;
+      }
+      timeout = null;
+    }, wait);
+  } as T & { cancel: () => void };
+
+  // 添加取消方法
+  throttled.cancel = () => {
+    if (timeout) {
+      clearTimeout(timeout);
+      timeout = null;
+    }
+    pendingArgs = null;
+  };
+
+  return throttled;
+}

@@ -64,9 +64,20 @@ export abstract class Tool {
     return this.onStreamEnd?.(this.streamContent, context)
   }
 
-  abstract onStreaming(delta: StreamDelta, content: string, context: RxToolContext): void;
+  /** 当流式传输开始时 */
+  onStreamStart() {
 
-  abstract onStreamEnd(content: string, context: RxToolContext): string;
+  }
+
+  /** 当正在流式传输时 */
+  onStreaming(delta: StreamDelta, content: string, context: RxToolContext) {
+
+  }
+
+  /** 流式传输结束时 */
+  onStreamEnd(content: string, context: RxToolContext) {
+    return content
+  }
 }
 
 export abstract class BaseTool {
