@@ -38,6 +38,13 @@ const engine = (params: any) => {
 window.test = () => {
   const ai = engine({
     request: {
+      getExtendParams: (params) => {
+        const { messages, tool } = params;
+        console.log("[getExtendParams]", params);
+        return {
+          aiRole: "expert"
+        }
+      },
       requestAsStream(messages, {
         write,
         complete,
