@@ -147,18 +147,20 @@ class PlanningAgent extends BaseAgent {
         this.emits.cancel(fn);
       },
     };
+    const messages = [
+      {
+        role: "system",
+        content: getSystemPrompt({
+          title: this.system.title,
+          tools: this.tools,
+        }),
+      },
+      ...this.messages,
+    ];
     const response = await this.request.requestAsStream(
-      [
-        {
-          role: "system",
-          content: getSystemPrompt({
-            title: this.system.title,
-            tools: this.tools,
-          }),
-        },
-        ...this.messages,
-      ],
+      messages,
       emitsProxy,
+      this.request.getExtendParams({ messages }),
     );
 
     if (response.type === "complete") {
@@ -217,7 +219,7 @@ class PlanningAgent extends BaseAgent {
         complete: () => {
           if (isLastPlan) {
             // 最后一个工具完成后，认为最终完成
-            this.emits.complete(this.messages);
+            this.emits.complete();
           }
         },
         error: (error) => {
@@ -231,27 +233,23 @@ class PlanningAgent extends BaseAgent {
 
       tool!.streamStart();
 
+      const messages = [
+        {
+          role: "system",
+          content: tool.systemPrompt,
+        },
+        ...this.messages,
+      ];
       const response = await this.request.requestAsStream(
-        [
-          {
-            role: "system",
-            content: tool.systemPrompt,
-          },
-          ...this.messages,
-        ],
+        messages,
         emitsProxy,
+        this.request.getExtendParams({ messages, tool }),
       );
 
       if (response.type === "complete") {
         const content = tool!.streamEnd(
           { text: response.content },
-          {
-            read() {
-              return "";
-            },
-            write() {},
-            error() {},
-          },
+          rxToolContext,
         );
         this.messages.push({ role: "assistant", content });
       }

@@ -16,10 +16,9 @@ interface Request {
   requestAsStream: (
     messages: ChatMessages,
     emits: Emits,
-    config: {
-      aiRole?: string;
-    },
+    extendParams: any,
   ) => void;
+  getExtendParams?: (params: { messages: ChatMessages; tool?: Tool }) => any;
 }
 
 const DEFAULT_EMITS: Emits = {
@@ -59,8 +58,8 @@ class ApiRequestClient {
   async requestAsStream(
     messages: ChatMessages,
     emits: Emits,
+    extendParams: any,
   ): Promise<RequestResult> {
-    console.log("[发起请求]", messages);
     return new Promise((resolve) => {
       let content = "";
       const emitsProxy: Emits = {
@@ -94,8 +93,14 @@ class ApiRequestClient {
         },
       };
 
-      this.request.requestAsStream(messages, emitsProxy, { aiRole: "" });
+      this.request.requestAsStream(messages, emitsProxy, extendParams);
     });
+  }
+
+  getExtendParams(
+    params: Parameters<NonNullable<Request["getExtendParams"]>>[0],
+  ) {
+    return this.request.getExtendParams?.(params);
   }
 }
 

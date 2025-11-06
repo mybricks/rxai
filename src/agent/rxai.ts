@@ -35,7 +35,7 @@ class Rxai extends BaseAgent {
     const planningAgent = new PlanningAgent({
       request: new ApiRequestClient(this.request),
       // @ts-ignore
-      tools: this.tools.map((Tool) => new Tool()),
+      tools: this.tools.map((Tool) => Tool()),
       system: this.system,
       emits,
     });
