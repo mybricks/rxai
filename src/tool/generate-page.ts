@@ -1,50 +1,49 @@
-import { Tool, RxToolContext, StreamDelta } from './base'
-import { parseFileBlocks } from './util'
+import { Tool, RxToolContext, StreamDelta } from "./base";
+import { parseFileBlocks } from "./util";
 
 interface Config {
-  path: string,
-  value: any,
-  style: any
+  path: string;
+  value: any;
+  style: any;
 }
 
-
 interface AddChildActionParams {
-  namespace?: string
-  ns?: string,
-  layout?: any,
-  configs: Config[]
+  namespace?: string;
+  ns?: string;
+  layout?: any;
+  configs: Config[];
 }
 
 interface DoConfigActionParams {
-  path: string,
-  value: any
+  path: string;
+  value: any;
 }
 
-type ActionParams = AddChildActionParams | DoConfigActionParams
+type ActionParams = AddChildActionParams | DoConfigActionParams;
 
 interface Action {
-  comId: string,
-  type: string,
-  target: string,
-  params: ActionParams
+  comId: string;
+  type: string;
+  target: string;
+  params: ActionParams;
 }
 
 const formatAction = (_action: string) => {
-  let action
+  let action;
   try {
     action = JSON.parse(_action);
   } catch (error) {
-    console.log('error', error, _action)
+    console.log("error", error, _action);
     try {
       // const repairedAction = jsonrepair(_action)
       // action = JSON.parse(repairedAction)
     } catch (error) {
-      console.error('repair action error', error)
+      console.error("repair action error", error);
     }
   }
 
   if (!Array.isArray(action)) {
-    return action
+    return action;
   }
 
   const [comId, target, type, params] = action;
@@ -52,68 +51,70 @@ const formatAction = (_action: string) => {
     comId,
     type,
     target,
-    params
-  }
+    params,
+  };
 
   // ns => namespace
-  if (newAct.type === 'addChild') {
+  if (newAct.type === "addChild") {
     if (newAct.params?.ns) {
       newAct.params.namespace = newAct.params.ns;
-      delete newAct.params.ns
+      delete newAct.params.ns;
     }
   }
 
   // absolute 布局的转化
-  if (newAct.params?.value?.display === 'absolute') {
-    newAct.params.value.position = 'smart'
-    delete newAct.params.value.display
+  if (newAct.params?.value?.display === "absolute") {
+    newAct.params.value.position = "smart";
+    delete newAct.params.value.display;
   }
 
   // absolute 布局的转化
-  if (newAct.type === 'addChild' && Array.isArray(newAct.params?.configs)) {
-    newAct.params.configs.forEach(config => {
-      if (config?.value?.display === 'absolute') {
-        config.value.position = 'smart'
-        delete config.value.display
+  if (newAct.type === "addChild" && Array.isArray(newAct.params?.configs)) {
+    newAct.params.configs.forEach((config) => {
+      if (config?.value?.display === "absolute") {
+        config.value.position = "smart";
+        delete config.value.display;
       }
 
       if (config?.style) {
         // 兼容background
-        transformToValidBackground(config?.style)
+        transformToValidBackground(config?.style);
       }
-    })
+    });
   }
 
   // 对样式幻觉的兼容
-  if (newAct.type === 'doConfig' && newAct.params?.style) {
+  if (newAct.type === "doConfig" && newAct.params?.style) {
     // 兼容background
-    transformToValidBackground(newAct.params?.style)
+    transformToValidBackground(newAct.params?.style);
   }
-  if (newAct.type === 'addChild' && newAct.params?.layout) {
+  if (newAct.type === "addChild" && newAct.params?.layout) {
     // 兼容margin
-    transformToValidMargins(newAct.params?.layout)
+    transformToValidMargins(newAct.params?.layout);
   }
 
-  return newAct
+  return newAct;
+};
 
-}
-
-
-/** 
+/**
  * 将background转换为有效的backgroundColor和backgroundImage
  * @param styles 需要转换的样式对象
  */
 function transformToValidBackground(styles: any): void {
   // 兼容下把渐变色配置到backgroundColor的情况
-  if (styles?.backgroundColor && styles?.backgroundColor?.indexOf('gradient') > -1) {
-    const imageRegex = /(url\([^)]+\)|linear-gradient\([^)]+\)|radial-gradient\([^)]+\)|conic-gradient\([^)]+\))/;
+  if (
+    styles?.backgroundColor &&
+    styles?.backgroundColor?.indexOf("gradient") > -1
+  ) {
+    const imageRegex =
+      /(url\([^)]+\)|linear-gradient\([^)]+\)|radial-gradient\([^)]+\)|conic-gradient\([^)]+\))/;
     const imageMatch = styles.backgroundColor.match(imageRegex);
 
     if (imageMatch && !styles.backgroundImage) {
       styles.backgroundImage = imageMatch[0];
     }
 
-    delete styles.backgroundColor
+    delete styles.backgroundColor;
   }
 
   // 如果没有background属性,直接返回
@@ -125,12 +126,14 @@ function transformToValidBackground(styles: any): void {
 
   // 提取颜色值
   // 匹配颜色格式: #XXX, #XXXXXX, rgb(), rgba(), hsl(), hsla(), 颜色关键字
-  const colorRegex = /(#[0-9A-Fa-f]{3,6}|rgb\([^)]+\)|rgba\([^)]+\)|hsl\([^)]+\)|hsla\([^)]+\)|[a-zA-Z]+)/;
+  const colorRegex =
+    /(#[0-9A-Fa-f]{3,6}|rgb\([^)]+\)|rgba\([^)]+\)|hsl\([^)]+\)|hsla\([^)]+\)|[a-zA-Z]+)/;
   const colorMatch = background.match(colorRegex);
 
   // 提取图片url或渐变
   // 匹配url()或各种渐变函数
-  const imageRegex = /(url\([^)]+\)|linear-gradient\([^)]+\)|radial-gradient\([^)]+\)|conic-gradient\([^)]+\))/;
+  const imageRegex =
+    /(url\([^)]+\)|linear-gradient\([^)]+\)|radial-gradient\([^)]+\)|conic-gradient\([^)]+\))/;
   const imageMatch = background.match(imageRegex);
 
   // 删除原有的background属性
@@ -192,7 +195,6 @@ function transformToValidMargins(styles: any): void {
   delete styles.margin;
 }
 
-
 /**
  * 创建actions解析器
  * @returns {Function} 解析函数
@@ -202,7 +204,7 @@ function createActionsParser() {
 
   return function parseActions(text: string) {
     const newActions = [];
-    const lines = text.split('\n');
+    const lines = text.split("\n");
 
     // 只处理除了最后一行之外的所有行（最后一行可能不完整）
     const linesToProcess = lines.slice(0, -1);
@@ -230,7 +232,7 @@ function createActionsParser() {
     }
 
     // 检查最后一行是否完整（如果以换行符结尾，说明最后一行是空的）
-    if (lastLine && lastLine.trim() && text.endsWith('\n')) {
+    if (lastLine && lastLine.trim() && text.endsWith("\n")) {
       const trimmedLastLine = lastLine.trim();
 
       if (!processedLines.has(trimmedLastLine)) {
@@ -254,53 +256,62 @@ function createActionsParser() {
 
 interface GeneratePageToolParams {
   /** 当前根组件信息 */
-  focusRootComponentDoc: string
+  focusRootComponentDoc: string;
   /** 应用特殊上下文信息 */
-  contextDoc: string
+  contextDoc: string;
   /** 返回示例 */
-  examples: string
+  examples: string;
 }
 
 class GeneratePageTool extends Tool {
-
   constructor(p: GeneratePageToolParams) {
     super({
-      name: 'generate-page',
-      description: '根据组件使用文档和需求，生成 MyBricks 页面',
-      version: '1.0.0',
-      systemPrompt: systemPrompt(p)
-    })
+      name: "generate-page",
+      description: "根据组件使用文档和需求，生成 MyBricks 页面",
+      version: "1.0.0",
+      systemPrompt: systemPrompt(p),
+    });
   }
 
-  private actions: any[] = []
+  private actions: any[] = [];
   private actionsParser = createActionsParser();
 
-  private processStreaming = throttle((delta: StreamDelta, content: string, context: RxToolContext) => {
-    const file = parseFileBlocks(content);
-    const parsedActions = this.actionsParser(file?.[0]?.content ?? '')
-    this.actions = this.actions.concat(parsedActions)
-    parsedActions.forEach(action => {
-      console.log('单步action', action)
-    })
-  }, 1000);
+  private processStreaming = throttle(
+    (delta: StreamDelta, content: string, context: RxToolContext) => {
+      const file = parseFileBlocks(content);
+      const parsedActions = this.actionsParser(file?.[0]?.content ?? "");
+      this.actions = this.actions.concat(parsedActions);
+      parsedActions.forEach((action) => {
+        console.log("单步action", action);
+      });
+    },
+    1000,
+  );
 
   onStreamStart() {
-    this.actions = []
+    this.actions = [];
     this.actionsParser = createActionsParser();
   }
 
-  onStreaming(delta: StreamDelta, content: string, context: RxToolContext): void {
+  onStreaming(
+    delta: StreamDelta,
+    content: string,
+    context: RxToolContext,
+  ): void {
     this.processStreaming(delta, content, context);
   }
 
   onStreamEnd(content: string, context: RxToolContext): string {
-    console.log('所有action', this.actions)
-    return content
+    console.log("所有action", this.actions);
+    return content;
   }
-
 }
 
-const systemPrompt = ({ focusRootComponentDoc, contextDoc, examples }: GeneratePageToolParams) => `
+const systemPrompt = ({
+  focusRootComponentDoc,
+  contextDoc,
+  examples,
+}: GeneratePageToolParams) => `
 <你的角色与任务>
   你是MyBricks低代码平台（以下简称MyBricks平台或MyBricks）的资深页面搭建助手及客服专家，经验丰富、实事求是、逻辑严谨。
   你的任务是回答用户的各类问题，包括对当前页面的修改、以及对于用户提出的搭建需求给出思路及建议。
@@ -720,15 +731,15 @@ ${examples}
   
 </examples>
 
-`
+`;
 
 export const GeneratePage = (params: GeneratePageToolParams) => {
-  return () => new GeneratePageTool(params)
-}
+  return () => new GeneratePageTool(params);
+};
 
 function throttle<T extends (...args: any[]) => any>(
   func: T,
-  wait: number
+  wait: number,
 ): T & { cancel: () => void } {
   let timeout: number | null = null;
   let pendingArgs: Parameters<T> | null = null;

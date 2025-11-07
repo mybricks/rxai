@@ -152,7 +152,7 @@ export const MockPC = {
   <返回的文件格式>
   必须为\`\`\`json file="actions.json" \`\`\`格式的操作列表，其中 file="actions.json" 不可省略，否则无法区分。
   </返回的文件格式>
-</对于当前搭建有以下特殊上下文>`
+</对于当前搭建有以下特殊上下文>`,
   },
   prd: {
     examples: `<example>
@@ -522,7 +522,7 @@ export const MockPC = {
 <mybricks.normal-pc.antd5.carousel/>
 **类型** UI类组件
 **说明** 轮播图，可以配置图片和内容的轮播展示组件`,
-    queryFocusCanvasWidth: () => '1024',
+    queryFocusCanvasWidth: () => "1024",
     queryComponentsDocsByNamespaces: (namespaces: any) => {
       return `<component>
   标题：自定义容器
@@ -1161,11 +1161,9 @@ styleAry声明
 标签激活: .checked
   - 可编辑样式: font、border、background
 
-</component>`
-    }
-  }
-}
+</component>`;
+    },
+  },
+};
 
-export const MockMobile = {
-
-}
+export const MockMobile = {};

@@ -1,43 +1,43 @@
-import { Tool, RxToolContext, StreamDelta } from './base'
-import { parseFileBlocks } from './util'
+import { Tool, RxToolContext } from "./base";
+import { parseFileBlocks } from "./util";
 
 interface GetComponentsDocAndPrdToolParams {
-  allowComponents: string
-  examples: string,
-  queryComponentsDocsByNamespaces: (namespaces: [{ namespace: string }]) => string
-  queryFocusCanvasWidth: () => string
+  allowComponents: string;
+  examples: string;
+  queryComponentsDocsByNamespaces: (
+    namespaces: [{ namespace: string }],
+  ) => string;
+  queryFocusCanvasWidth: () => string;
 }
 
 class GetComponentsDocAndPrdTool extends Tool {
-
   private queryComponentsDocsByNamespaces(namespaces: [{ namespace: string }]) {
-    return ''
+    return "";
   }
 
   constructor(p: GetComponentsDocAndPrdToolParams) {
     super({
-      name: 'get-components-doc-and-prd',
-      description: '整理或扩写需求 + 按需获取组件文档，是各类组件操作（页面搭建、组件修改）的前置操作',
-      version: '1.0.0',
-      systemPrompt: systemPrompt(p)
-    })
-    this.queryComponentsDocsByNamespaces = p.queryComponentsDocsByNamespaces
+      name: "get-components-doc-and-prd",
+      description:
+        "整理或扩写需求 + 按需获取组件文档，是各类组件操作（页面搭建、组件修改）的前置操作",
+      version: "1.0.0",
+      systemPrompt: systemPrompt(p),
+    });
+    this.queryComponentsDocsByNamespaces = p.queryComponentsDocsByNamespaces;
   }
 
   onStreamEnd(content: string, context: RxToolContext): string {
     const results = parseFileBlocks(content);
 
-    const prdFile = results.filter(r => r.type === 'prd')[0];
+    const prdFile = results.filter((r) => r.type === "prd")[0];
 
-    const requireComsFile = results.filter(r => r.type === 'require')[0];
+    const requireComsFile = results.filter((r) => r.type === "require")[0];
     let requireComponents = [];
     try {
-      requireComponents = JSON.parse(requireComsFile?.content)
-    } catch (error) {
-      
-    }
-    const requireComponentsDocs = this.queryComponentsDocsByNamespaces(requireComponents)
-
+      requireComponents = JSON.parse(requireComsFile?.content);
+    } catch (error) {}
+    const requireComponentsDocs =
+      this.queryComponentsDocsByNamespaces(requireComponents);
 
     return `<需求文档>
 ---
@@ -54,12 +54,15 @@ ${requireComsFile.fileName}
 
 ${requireComponentsDocs}
 
-</允许使用的组件知识库文档>`
+</允许使用的组件知识库文档>`;
   }
 }
 
-
-const systemPrompt = ({ allowComponents, examples, queryFocusCanvasWidth }: GetComponentsDocAndPrdToolParams) => `
+const systemPrompt = ({
+  allowComponents,
+  examples,
+  queryFocusCanvasWidth,
+}: GetComponentsDocAndPrdToolParams) => `
 <工具总览>
 你是一个获取组件文档和用户需求的工具，你作为MyBricks低代码平台（以下简称MyBricks平台或MyBricks）的资深页面搭建助手，拥有专业的产品经理能力。
 你的任务是根据「允许使用的组件及其说明」，整理或扩写用户的需求（如果有图片附件、需要参考图片中的内容，对图片详细理解），并将需求中可能用到的组件列出来整理成「需求文档」和「组件使用文档」。
@@ -146,9 +149,10 @@ ${allowComponents}
 <examples>
 ${examples}
 </examples>
-`
+`;
 
-export const GetComponentsDocAndPrd = (params: GetComponentsDocAndPrdToolParams) => {
-  return () => new GetComponentsDocAndPrdTool(params)
-}
-
+export const GetComponentsDocAndPrd = (
+  params: GetComponentsDocAndPrdToolParams,
+) => {
+  return () => new GetComponentsDocAndPrdTool(params);
+};

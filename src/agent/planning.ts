@@ -1,92 +1,7 @@
-// import { ReActAgent } from "./react";
-// import { AgentState, BaseAgentConfig } from "./base";
-// import { getSystemPrompt } from "../prompt/planning";
-
-// class PlanningAgent extends ReActAgent {
-//   steps: { name: string; done: boolean }[] = [];
-//   stepIndex: number = 0;
-//   constructor(options: BaseAgentConfig) {
-//     super(options);
-//   }
-
-//   protected async think(): Promise<boolean> {
-//     const response = await this.request.requestAsStream([
-//       {
-//         role: "system",
-//         content: getSystemPrompt({
-//           title: this.system.title,
-//           tools: this.tools,
-//         }),
-//       },
-//       ...this.messages,
-//     ]);
-
-//     if (response.type === "complete") {
-//       const match = response.content!.match(
-//         /file="planList\.json"[\s\S]*?(\[[\s\S]*?\])/,
-//       );
-
-//       this.state = AgentState.FINISHED;
-
-//       if (match?.[1]) {
-//         // 正常返回计划列表，执行act
-//         this.steps = JSON.parse(match[1]);
-
-//         // TODO: 解析失败的重试
-//         return true;
-//       }
-//     } else {
-//       console.log("TODO: 失败的话重试，没有步骤的话重试等");
-//       this.state = AgentState.FINISHED;
-//     }
-//     return false;
-//   }
-
-//   protected async act(): Promise<string> {
-//     console.log("[开始执行计划]", this.steps);
-
-//     // while (this.stepIndex < this.steps.length) {
-//     //   const step = this.steps[this.stepIndex];
-//     //   const tool = this.tools.find((tool) => {
-//     //     return tool.name === step.name;
-//     //   });
-
-//     //   this.
-//     // }
-
-//     return "";
-//   }
-// }
-
-// export { PlanningAgent };
-
 import { ApiRequestClient } from "../request";
 import { Tool, RxToolContext } from "../tool/base";
 import { getSystemPrompt } from "../prompt/planning";
-
-interface BaseSystem {
-  title: string;
-}
-interface BaseAgentOptions {
-  // request: ApiRequestClient;
-  // tools: (typeof Tool)[];
-  system: BaseSystem;
-}
-
-abstract class BaseAgent {
-  protected messages: ChatMessages = [];
-  // protected request: ApiRequestClient;
-  // protected tools: (typeof Tool)[];
-  protected system: BaseSystem;
-
-  constructor(options: BaseAgentOptions) {
-    // this.request = options.request;
-    // this.tools = options.tools;
-    this.system = options.system;
-  }
-
-  // abstract run(content: unknown): Promise<void>;
-}
+import { BaseAgent, BaseAgentOptions } from "./base";
 
 interface PlanningAgentOptions extends BaseAgentOptions {
   emits: Emits;
@@ -257,4 +172,4 @@ class PlanningAgent extends BaseAgent {
   }
 }
 
-export { PlanningAgent, BaseAgent, BaseAgentOptions };
+export { PlanningAgent };
