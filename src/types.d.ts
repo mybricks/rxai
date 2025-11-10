@@ -2,10 +2,22 @@ type ChatMessages = {
   role: string;
   content: unknown;
 }[];
+
 type Step = { name: string; done: boolean };
+
 interface Emits {
   write: (chunk: string) => void;
-  complete: () => void;
+  complete: (content: string) => void;
   error: (e: Error) => void;
   cancel: (cb: () => void) => void;
+}
+
+interface Tool {
+  name: string;
+  description: string;
+  getPrompts: () => string;
+  execute: (
+    content: string,
+    type: "write" | "complete" | "error" | "cancel",
+  ) => string | void;
 }
