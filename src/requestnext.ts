@@ -70,7 +70,8 @@ const requestAsStream = (params: { messages: ChatMessages; emits: Emits }) => {
   const { cancel, write, complete, error } = emits;
 
   try {
-    const model = `anthropic/claude-sonnet-4`;
+    // const model = `anthropic/claude-sonnet-4`;
+    const model = `gpt-5-mini`;
 
     const controller = new AbortController();
     fetch("http://ai.mybricks.world/stream-test", {
