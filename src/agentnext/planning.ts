@@ -8,7 +8,7 @@ interface PlanningAgentOptions extends BaseAgentOptions {
   emits: Emits;
   request: ApiRequestClient;
   tools: Tool[];
-  execute: (params: { files: any[]; toolName: string }) => string;
+  key: string;
 }
 
 /**
@@ -21,14 +21,14 @@ class PlanningAgent extends BaseAgent {
   private request: ApiRequestClient;
   private tools: Tool[];
   private emits: Emits;
-  private execute: (params: { files: any[]; toolName: string }) => string;
+  private key: string;
 
   constructor(options: PlanningAgentOptions) {
     super(options);
     this.request = options.request;
     this.tools = options.tools;
     this.emits = options.emits;
-    this.execute = options.execute;
+    this.key = options.key;
   }
 
   getMessages() {
@@ -155,7 +155,10 @@ class PlanningAgent extends BaseAgent {
 
       if (response.type === "complete") {
         const files = parseFileBlocks(response.content);
-        const content = this.execute({ files, toolName: tool.name });
+        const content = tool.execute({
+          files,
+          key: this.key,
+        });
         this.messages.push({ role: "assistant", content });
       }
     }

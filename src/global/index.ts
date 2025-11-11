@@ -12,10 +12,21 @@ const register = (params: RegisterParams) => {
 const requestAI = (params: RequestParams) => {
   if (mockFn) {
     const mock = mockFn();
-    params.execute({
-      toolName: mock.toolName,
-      files: parseFileBlocks(mock.result),
-    });
+    const tool = Object.entries(rxai.scenes)
+      .reduce((pre, [, value]) => {
+        pre.push(...value.tools);
+        return pre;
+      }, [] as Tool[])
+      .find((tool) => tool.name === mock.toolName);
+
+    if (tool) {
+      tool.execute({
+        files: parseFileBlocks(mock.result),
+        key: mock.key,
+      });
+    } else {
+      console.error(`Tool「${mock.toolName}」not found`);
+    }
   } else {
     rxai.requestAI(params);
   }

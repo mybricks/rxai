@@ -41,7 +41,6 @@ class ApiRequestClient {
             type: "complete",
             content,
           });
-          console.log("[content]", content);
         },
         error(ex) {
           emits.error(ex);

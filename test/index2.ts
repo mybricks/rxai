@@ -411,6 +411,10 @@ const pageScene: {
 `;
       },
       aiRole: "expert",
+      execute(params) {
+        console.log("[get-components-doc-and-prd - execute]", params);
+        return "get-components-doc-and-prd 调用完成";
+      },
     },
     {
       name: "generate-page",
@@ -984,113 +988,119 @@ comId:_root_
 `;
       },
       aiRole: "expert",
+      execute(params) {
+        console.log("[generate-page - execute]", params);
+        return "generate-page 调用完成";
+      },
     },
   ],
 };
 
 register(pageScene);
 
-mock(() => {
-  return {
-    toolName: "hello",
-    result: `
-M:好的,我来为您搭建一个学生登录页面。以下是详细的需求分析和组件选型:
+// mock(() => {
+//   return {
+//     key: "uuid",
+//     toolName: "get-components-doc-and-prd",
+//     result: `
+// M:好的,我来为您搭建一个学生登录页面。以下是详细的需求分析和组件选型:
 
-\`\`\`md file="prd.md"
-## 概述
-设计一个简洁、友好的学生登录页面，支持账号密码登录方式。
+// \`\`\`md file="prd.md"
+// ## 概述
+// 设计一个简洁、友好的学生登录页面，支持账号密码登录方式。
 
-## 功能需求分析
-### 核心功能
-1. **用户登录**：学生通过账号密码进行身份验证
-2. **表单校验**：对输入内容进行合法性校验
-3. **登录提交**：点击登录按钮提交表单数据
+// ## 功能需求分析
+// ### 核心功能
+// 1. **用户登录**：学生通过账号密码进行身份验证
+// 2. **表单校验**：对输入内容进行合法性校验
+// 3. **登录提交**：点击登录按钮提交表单数据
 
-### 具体功能模块
-**登录表单区域**：
-- 账号输入：用户名/学号输入框
-- 密码输入：密码输入框（密文显示）
-- 登录按钮：提交登录信息
+// ### 具体功能模块
+// **登录表单区域**：
+// - 账号输入：用户名/学号输入框
+// - 密码输入：密码输入框（密文显示）
+// - 登录按钮：提交登录信息
 
-**可选功能**：
-- 记住密码选项
-- 忘记密码链接
+// **可选功能**：
+// - 记住密码选项
+// - 忘记密码链接
 
-## UI设计要求
-### 整体布局
-- 采用垂直居中布局
-- 顶部显示标题"学生登录"
-- 中间为登录表单区域
-- 底部可添加其他辅助信息
+// ## UI设计要求
+// ### 整体布局
+// - 采用垂直居中布局
+// - 顶部显示标题"学生登录"
+// - 中间为登录表单区域
+// - 底部可添加其他辅助信息
 
-### 视觉设计
-- **配色方案**：简洁清爽的教育类配色
-- **表单样式**：统一的表单项布局和样式
-- **按钮设计**：醒目的登录按钮
-- **间距**：表单项之间保持适当间距
+// ### 视觉设计
+// - **配色方案**：简洁清爽的教育类配色
+// - **表单样式**：统一的表单项布局和样式
+// - **按钮设计**：醒目的登录按钮
+// - **间距**：表单项之间保持适当间距
 
-### 交互设计
-- 表单项支持输入交互
-- 密码框支持密文显示
-- 登录按钮点击后提交表单
-- 提供必填项校验提示
+// ### 交互设计
+// - 表单项支持输入交互
+// - 密码框支持密文显示
+// - 登录按钮点击后提交表单
+// - 提供必填项校验提示
 
-## 技术实现要点
-- 使用表单容器统一管理表单数据
-- 实现表单校验逻辑
-- 配置登录接口调用
-- 提供良好的用户反馈
-\`\`\`
+// ## 技术实现要点
+// - 使用表单容器统一管理表单数据
+// - 实现表单校验逻辑
+// - 配置登录接口调用
+// - 提供良好的用户反馈
+// \`\`\`
 
-\`\`\`json file="require.json"
-[
-  {
-    "namespace": "mybricks.harmony.text",
-    "title": "文本",
-    "description": "用于显示页面标题"
-  },
-  {
-    "namespace": "mybricks.harmony.formContainer",
-    "title": "表单容器",
-    "description": "用于管理登录表单的数据收集和提交"
-  },
-  {
-    "namespace": "mybricks.harmony.formInput",
-    "title": "单行输入框",
-    "description": "用于账号输入"
-  },
-  {
-    "namespace": "mybricks.harmony.formPassword",
-    "title": "密码输入框",
-    "description": "用于密码输入"
-  },
-  {
-    "namespace": "mybricks.harmony.containerBasic",
-    "title": "基础容器",
-    "description": "用于页面整体布局和背景设置"
-  }
-]
-\`\`\`
+// \`\`\`json file="require.json"
+// [
+//   {
+//     "namespace": "mybricks.harmony.text",
+//     "title": "文本",
+//     "description": "用于显示页面标题"
+//   },
+//   {
+//     "namespace": "mybricks.harmony.formContainer",
+//     "title": "表单容器",
+//     "description": "用于管理登录表单的数据收集和提交"
+//   },
+//   {
+//     "namespace": "mybricks.harmony.formInput",
+//     "title": "单行输入框",
+//     "description": "用于账号输入"
+//   },
+//   {
+//     "namespace": "mybricks.harmony.formPassword",
+//     "title": "密码输入框",
+//     "description": "用于密码输入"
+//   },
+//   {
+//     "namespace": "mybricks.harmony.containerBasic",
+//     "title": "基础容器",
+//     "description": "用于页面整体布局和背景设置"
+//   }
+// ]
+// \`\`\`
 
-\`\`\`json file="require.json"
-[
-  {
-    "namespace": "mybricks.harmony.text",
-    "title": "文本",
-    "description": "用于显示页面标题"
-  },
-]
-\`\`\`
-`,
-  };
-});
+// \`\`\`json file="require.json"
+// [
+//   {
+//     "namespace": "mybricks.harmony.text",
+//     "title": "文本",
+//     "description": "用于显示页面标题"
+//   },
+// ]
+// \`\`\`
+// `,
+//   };
+// });
 
 requestAI({
+  key: "uuid",
   message: "搭建一个生日贺卡页面",
-  execute: (params: { files: any[]; toolName: string }) => {
-    console.log("[execute - params]", params);
-    return "调用工具成功";
-  },
+  // execute: (params: { files: any[]; toolName: string }) => {
+  //   console.log("[execute - params]", params);
+  //   return "调用工具成功";
+  // },
   emits: {
     write: (content: string) => {
       // console.log("[requestAI - write]", content);

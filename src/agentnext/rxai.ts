@@ -10,14 +10,15 @@ interface RegisterParams {
 interface RequestParams {
   message: string | ChatMessages[0];
   emits: Emits;
-  execute: (params: { files: any[]; toolName: string }) => string;
+  key: string;
 }
 
 class Rxai extends BaseAgent {
   private cacheMessages: ChatMessages[] = [];
   private cacheIndex: number = 0;
   // 场景
-  private scenes: Record<string, RegisterParams> = {};
+  scenes: Record<string, RegisterParams> = {};
+
   constructor() {
     super({
       system: { title: "MyBricks" },
@@ -29,7 +30,7 @@ class Rxai extends BaseAgent {
   }
 
   async requestAI(params: RequestParams) {
-    const { message, emits, execute } = params;
+    const { message, emits, key } = params;
     const index = this.cacheIndex++;
     const planningAgent = new PlanningAgent({
       request: new ApiRequestClient(),
@@ -39,7 +40,7 @@ class Rxai extends BaseAgent {
       }, [] as Tool[]),
       system: this.system,
       emits,
-      execute,
+      key,
     });
 
     await planningAgent.run(message);
