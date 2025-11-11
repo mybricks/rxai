@@ -3,6 +3,7 @@ import { ApiRequestClient } from "../requestnext";
 import { getSystemPrompt } from "../prompt/planning";
 import { BaseAgent, BaseAgentOptions } from "./base";
 import { parseFileBlocks } from "../tool/util";
+import { getToolPrompt } from "../prompt/tool";
 
 interface PlanningAgentOptions extends BaseAgentOptions {
   emits: Emits;
@@ -143,7 +144,7 @@ class PlanningAgent extends BaseAgent {
       const messages = [
         {
           role: "system",
-          content: tool.getPrompts(),
+          content: getToolPrompt(tool),
         },
         ...this.messages,
       ];
