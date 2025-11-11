@@ -11,3 +11,4 @@ const requestAI = (params: RequestParams) => {
 };
 
 export { register, requestAI };
+export * from "../prompt/base";

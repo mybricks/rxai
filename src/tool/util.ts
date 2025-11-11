@@ -9,7 +9,8 @@ export function parseFileBlocks(content: string) {
 
   while (currentIndex < content.length) {
     // 查找代码块开始标记
-    const startPattern = /```(\w+)\s+type="([^"]+)"\s+file="([^"]+)"\s*\n/g;
+    // const startPattern = /```(\w+)\s+type="([^"]+)"\s+file="([^"]+)"\s*\n/g;
+    const startPattern = /```(\w+)\s+file="([^"]+)"\s*\n/g;
     startPattern.lastIndex = currentIndex;
 
     const startMatch = startPattern.exec(content);
@@ -17,7 +18,8 @@ export function parseFileBlocks(content: string) {
       break; // 没有更多代码块
     }
 
-    const [startFullMatch, language, type, fileName] = startMatch;
+    // const [startFullMatch, language, type, fileName] = startMatch;
+    const [startFullMatch, language, fileName] = startMatch;
     const contentStartIndex = startMatch.index + startFullMatch.length;
 
     // 查找代码块结束标记
@@ -55,7 +57,7 @@ export function parseFileBlocks(content: string) {
       fileName: fileName,
       name: name,
       extension: extension,
-      type: type,
+      // type: type,
       language: language,
       content: blockContent,
       isComplete: isComplete,

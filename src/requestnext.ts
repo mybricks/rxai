@@ -29,7 +29,6 @@ class ApiRequestClient {
     extendParams: ExtendParams,
   ): Promise<RequestResult> {
     return new Promise((resolve) => {
-      console.log("[extendParams]", extendParams);
       let content = "";
       const emitsProxy: Emits = {
         write(chunk) {

@@ -1,4 +1,4 @@
-import { register, requestAI } from "../src";
+import { register, requestAI, fileFormat } from "../src";
 
 const pageScene: {
   name: string;
@@ -21,13 +21,11 @@ const pageScene: {
 
 <任务流程>
   根据「用户需求」和「搭建上下文」，按照以下格式返回内容：
-    \`\`\`md type="prd" file="XX需求文档.md"
-      (需求分析规格说明书的内容)
-    \`\`\`
-    
-    \`\`\`json type="require" file="XX需求组件选型.json"
-      (搭建所需要的组件选型)
-    \`\`\`
+    XX需求文档
+    ${fileFormat({ fileName: "prd.md", content: "(需求分析规格说明书的内容)" })}
+
+    XX需求组件选型
+    ${fileFormat({ fileName: "require.json", content: "(搭建所需要的组件选型)" })}
     
     - 注意：require类型文件要严格按照JSON格式返回，注意不要出现语法错误；
 </任务流程>
@@ -291,13 +289,11 @@ const pageScene: {
     - 组件选型不要想当然的认为英文的namespace就是语义化的，更多关注于中文描述和「何时使用」「注意事项」来判断应该使用什么组件。
   
   接下来，根据上述分析，按照以下格式返回内容：
-  \`\`\`md type="prd" file="XX需求文档.md"
-    (需求分析规格说明书的内容)
-  \`\`\`
-  
-  \`\`\`json type="require" file="XX需求组件选型.json"
-    (搭建所需要的组件选型)
-  \`\`\`
+  XX需求文档
+  ${fileFormat({ fileName: "prd.md", content: "(需求分析规格说明书的内容)" })}
+  XX需求组件选型
+
+  ${fileFormat({ fileName: "require.json", content: "(搭建所需要的组件选型)" })}
   
   注意：require.json文件要严格按照JSON格式返回，注意不要出现语法错误；
   
@@ -327,8 +323,10 @@ const pageScene: {
         - 中部是卡片概览，一行三列等分，我们使用一个自定义容器来均分三列；
         - 底部是表格，表格外使用自定义容器配置背景和圆角，内部使用表格配置多列，并且配置合理的分页信息
 
-      \`\`\`json type="actions" file="云服务器管理页面生成步骤.json"
-      ["_root_",":root","doConfig",{"path":"root/样式","style":{"background":"#f5f5f5"}}]
+      云服务器管理页面生成步骤:
+      ${fileFormat({
+        fileName: "actions.json",
+        content: `["_root_",":root","doConfig",{"path":"root/样式","style":{"background":"#f5f5f5"}}]
       ["_root_",":root","doConfig",{"path":"root/布局","value":{"display":"flex", "flexDirection": "column"}}]
       ["_root_","_rootSlot_","addChild",{"title": "页面布局", "ns": "mybricks.basic-comlib.antd5.grid", "comId": "u_page", "layout": {"width": "100%", "height": "fit-content"}, configs: [{"path": "常规/行列数据", "value": [{ "key": "row1", "cols": [{ "key": "col1", "width": 200 }, { "key": "col2", "width": "auto" }] }] }] }]
       ["u_page","col1","addChild",{"title":"左侧容器","ns":"mybricks.normal-pc.antd5.custom-container","comId":"u_left","layout":{"width":"100%","height":'fit-content',"marginRight":12},"configs":[{"path":"常规/布局","value":{"display":"flex", "flexDirection": "column"}}]}]
@@ -337,8 +335,8 @@ const pageScene: {
       ["u_page","col2","addChild",{"title":"右侧容器","ns":"mybricks.normal-pc.antd5.custom-container","comId":"u_right","layout":{"width":"100%","height":'fit-content'},"configs":[{"path":"常规/布局","value":{"display":"flex", "flexDirection": "column"}}]}]
       ["u_right","content","addChild", 顶部个人信息]
       ["u_right","content","addChild", 卡片概览]
-      ["u_right","content","addChild", 底部表格]
-      \`\`\`
+      ["u_right","content","addChild", 底部表格]`,
+      })}
     
     在上述内容中：
     我们遵循了以下关键事项：
@@ -365,9 +363,11 @@ const pageScene: {
         文档的详情内容，其中
           - 文章头部的高度设置fit-content，保证头部内容能完整展示；
           - 文章内容直接使用flex纵向布局，保证内容增长时容器变高；
-        
-      \`\`\`json type="actions" file="播客详情页面生成步骤.json"
-      ["_root_",":root","doConfig",{"path":"root/样式","style":{"background":"#f5f5f5"}}]
+
+      播客详情页面生成步骤:
+      ${fileFormat({
+        fileName: "actions.json",
+        content: `["_root_",":root","doConfig",{"path":"root/样式","style":{"background":"#f5f5f5"}}]
       ["_root_",":root","doConfig",{"path":"root/布局","value":{"display":"flex", "flexDirection": "column"}}]
       ["_root_","_rootSlot_","addChild",{"title": "顶部导航", "ns": "mybricks.normal-pc.antd5.custom-container", "comId": "u_navs", "layout": {"width": "100%", "height": 60, "marginBottom": 24}, configs: [{"path":"常规/布局","value":{"display":"flex", "flexDirection": "row", "alignItems": "center", "justifyContent": "space-between"}}] }]
       ["u_navs","content","addChild", {"title": "左侧菜单", "ns": "菜单", "comId": "u_leftMenu", "layout": {"width": '100%', "height": 'fit-content', "marginLeft": 12}, configs: [] }]
@@ -375,8 +375,8 @@ const pageScene: {
       ["_root_","_rootSlot_","addChild",{"title": "详情内容", "ns": "mybricks.normal-pc.antd5.custom-container", "comId": "u_detail", "layout": {"width": "100%", "height": 'fit-content', marginTop: 12, marginLeft: 12, marginRight: 12}, configs: [{"path":"常规/布局","value":{"display":"flex", "flexDirection": "column"}}] }]
       ["u_detail","content","addChild",{"title": "文章头部", "ns": "mybricks.normal-pc.antd5.custom-container", "comId": "u_header", "layout": {"width": "100%", "height": fit-content'}, configs: [{"path":"常规/布局","value":{"display":"flex", "flexDirection": "column"}}] }]
       ["u_detail","content","addChild",{"title": "文章内容", "ns": "mybricks.normal-pc.antd5.custom-container", "comId": "u_header", "layout": {"width": "100%", "height": 'fit-content', marginTop: 20}, configs: [{"path":"常规/布局","value":{"display":"flex", "flexDirection": "column"}}] }]
-      // ...
-      \`\`\`
+      // ...`,
+      })}
     
     在上述内容中：
     我们遵循了以下关键事项：
@@ -393,13 +393,15 @@ const pageScene: {
     <assistant_response>
       好的，一行三列的导航考察的是我们布局的关键知识，一行三列，就是均分布局，均分我们一般选择使用flex布局。
       所以提供一个flex容器，确定子组件的宽度，并将内容平铺上去。
-      
-    \`\`\`json type="actions" file="一行三列导航生成步骤.json"
-    ["_root_",":root","doConfig",{"path":"root/标题","value":"一行三列的导航"}]
+
+    一行三列导航生成步骤:
+    ${fileFormat({
+      fileName: "actions.json",
+      content: `["_root_",":root","doConfig",{"path":"root/标题","value":"一行三列的导航"}]
     ["_root_",":root","doConfig",{"path":"root/布局","value":{"display":"flex","flexDirection":"column","alignItems":"center"}}]
     ["_root_","_rootSlot_","addChild",{"title":"Flex容器","ns":"some.container","comId":"u_iiusd7","layout":{"width":"100%","height":200,"marginLeft":8,"marginRight":8},"configs":[{"path":"常规/布局","value":{"display":"flex","flexDirection":"row","justifyContent":"space-between","alignItems":"center","flexWrap":"wrap"}}]}]
-    ["u_iiusd7","content","addChild",{"title":"导航1","ns":"some.icon","comId":"u_icon1","layout":{"width":120,"height":120,"marginTop":8},"configs":[{"path":"样式/文本","style":{"background":"#0000FF"}}]}]
-    \`\`\`
+    ["u_iiusd7","content","addChild",{"title":"导航1","ns":"some.icon","comId":"u_icon1","layout":{"width":120,"height":120,"marginTop":8},"configs":[{"path":"样式/文本","style":{"background":"#0000FF"}}]}]`,
+    })}
 
     注意：
       - 这个Flex容器是根组件的直接子组件，所以不允许添加ignore标记。
@@ -477,10 +479,9 @@ comId:_root_
 <如何搭建以及修改>
   实际上，在手动搭建过程中，通过一系列的action来分步骤完成对于面向组件或其中插槽的添加及修改，下面的actions文件即通过模拟用户行为的方式来完成页面的搭建或修改。
   当需要完成页面搭建或修改时，你需要按照如下格式返回actions操作步骤文件：
-  
-  \`\`\`json type="actions" file="操作步骤.json"
-  [comId, target, type, params]
-  \`\`\`
+
+  操作步骤:
+  ${fileFormat({ fileName: "actions.json", content: "[comId, target, type, params]" })}
 
   <关于actions>
     actions.json文件由多个action构成,每个 action 在结构上都严格遵循以下格式：[comId, target, type, params];
@@ -547,9 +548,8 @@ comId:_root_
       }
       
       例如，当用户要求将当前组件的宽度设置为200px，可以返回以下内容：
-      \`\`\`json type="actions" file="修改组件宽度.json"
-      ["u_ou1rs",":root","setLayout",{"width":200}]
-      \`\`\`
+      修改组件宽度:
+      ${fileFormat({ fileName: "actions.json", content: `["u_ou1rs",":root","setLayout",{"width":200}]` })}
       
       注意：当需要修改布局和尺寸信息时，仅返回用户要求的内容即可，无需返回所有的布局和尺寸信息属性。
     </setLayout>
@@ -578,14 +578,10 @@ comId:_root_
       
       例如：
       - 属性的配置：
-      \`\`\`json type="actions" file="属性配置步骤.json"
-      ["u_ou1rs",":root","doConfig",{"path":"常规/标题","value":"标题内容"}]
-      \`\`\`
+      ${fileFormat({ fileName: "actions.json", content: `["u_ou1rs",":root","doConfig",{"path":"常规/标题","value":"标题内容"}]` })}
       
       - 样式的配置：
-      \`\`\`json type="actions" file="样式配置步骤.json"
-      ["u_ou1rs",":root","doConfig",{"path":"常规/banner样式","style":{"backgroundColor":"red"}}]
-      \`\`\`
+      ${fileFormat({ fileName: "actions.json", content: `["u_ou1rs",":root","doConfig",{"path":"常规/banner样式","style":{"backgroundColor":"red"}}]` })}
       
         注意：
         - 当需要修改组件的样式时，只允许修改style编辑器description中声明的属性；
@@ -613,17 +609,14 @@ comId:_root_
       \`\`\`
       
       例如：
-      \`\`\`json type="actions" file="添加文本组件步骤.json"
-      ["u_ou1rs","content","addChild",{"title":"添加的文本组件","ns":"namespace占位","comId":"u_iiusd7"}]
-      \`\`\`
+      添加文本组件步骤:
+      ${fileFormat({ fileName: "actions.json", content: `["u_ou1rs","content","addChild",{"title":"添加的文本组件","ns":"namespace占位","comId":"u_iiusd7"}]` })}
+      
+      添加带配置属性的步骤:
+      ${fileFormat({ fileName: "actions.json", content: `["u_ou1rs","content","addChild",{"title":"背景图","ns":"namespace占位","comId":"u_iiusd7","layout":{"width":"100%","height":200,"marginTop":8,"marginLeft":12,"marginRight":12},"configs":[{"path":"常规/图片地址","value":"https://ai.mybricks.world/image-search?term=风景"},{"path":"样式/图片","style":{"borderRadius":"8px"}}]}]` })}
   
-      \`\`\`json type="actions" file="添加带配置属性的步骤.json"
-      ["u_ou1rs","content","addChild",{"title":"背景图","ns":"namespace占位","comId":"u_iiusd7","layout":{"width":"100%","height":200,"marginTop":8,"marginLeft":12,"marginRight":12},"configs":[{"path":"常规/图片地址","value":"https://ai.mybricks.world/image-search?term=风景"},{"path":"样式/图片","style":{"borderRadius":"8px"}}]}]
-      \`\`\`
-  
-      \`\`\`json type="actions" file="添加带ignore标记的步骤.json"
-      ["u_ou1rs","content","addChild",{"title":"添加的布局组件","ns":"namespace占位","comId":"u_iiusd7","ignore": true}] // 配置ignore
-      \`\`\`
+      添加带ignore标记的步骤:
+      ${fileFormat({ fileName: "actions.json", content: `["u_ou1rs","content","addChild",{"title":"添加的布局组件","ns":"namespace占位","comId":"u_iiusd7","ignore": true}] // 配置ignore` })}
   
       注意:
         - 要充分考虑被添加的组件与其他组件之间的间距以及位置关系，确保添加的组件的美观度的同时、且不会与其他组件重叠或冲突；
@@ -669,9 +662,8 @@ comId:_root_
         - fixed定位的组件不允许使用margin；
       
         使用fixed定位的例子:
-          \`\`\`json type="actions" file="添加一个fixed定位组件.json"
-          ["_root_","_rootSlot_","addChild",{"title":"添加一个固定定位组件","comId":"u_fixed","ns":"组件","layout":{"position":"fixed","width":"100%","height":84,"bottom":0,"left":0},"configs":[]}]
-          \`\`\`
+          添加一个fixed定位组件:
+          ${fileFormat({ fileName: "actions.json", content: `["_root_","_rootSlot_","addChild",{"title":"添加一个固定定位组件","comId":"u_fixed","ns":"组件","layout":{"position":"fixed","width":"100%","height":84,"bottom":0,"left":0},"configs":[]}]` })}
 
       在插槽的不同布局下，组件的定位由所在插槽的布局方式决定：
         - 在当前组件的插槽中，可以添加fixed定位的组件，禁止在其他插槽中添加fixed定位的组件；
@@ -696,10 +688,11 @@ comId:_root_
         - 3. 如果布局组件的父组件不是布局组件，或者是根组件，不能添加ignore标记，不能被优化掉；
 
         例子：第一个布局组件仅承担布局功能，可以添加ignore标记；第二个布局组件承担样式功能，不能添加ignore标记。
-        \`\`\`json type="actions" file="辅助标记.json"
-        ["目标组件id","插槽id占位","addChild",{"title":"添加一个布局组件","comId":"u_layout","ignore":true,"ns":"组件","layout":{"width":"100%","height":120},"configs":[{"path":"常规/布局","value":{"display":"flex","flexDirection":"row","alignItems":"center"}}]}]
-        ["目标组件id","插槽id占位","addChild",{"title":"添加一个布局组件","comId":"u_layout","ns":"组件","layout":{"width":"100%","height":120},"configs":[{"path":"常规/布局","value":{"display":"flex","flexDirection":"row","alignItems":"center"}},{"path":"样式/样式","style":{"background":"#FFFFFF"}}]}]
-        \`\`\`
+        ${fileFormat({
+          fileName: "actions.json",
+          content: ` ["目标组件id","插槽id占位","addChild",{"title":"添加一个布局组件","comId":"u_layout","ignore":true,"ns":"组件","layout":{"width":"100%","height":120},"configs":[{"path":"常规/布局","value":{"display":"flex","flexDirection":"row","alignItems":"center"}}]}]
+        ["目标组件id","插槽id占位","addChild",{"title":"添加一个布局组件","comId":"u_layout","ns":"组件","layout":{"width":"100%","height":120},"configs":[{"path":"常规/布局","value":{"display":"flex","flexDirection":"row","alignItems":"center"}},{"path":"样式/样式","style":{"background":"#FFFFFF"}}]}]`,
+        })}
       </辅助标记使用>
   
       <布局使用示例>
@@ -707,11 +700,12 @@ comId:_root_
           子组件通过嵌套来搭建，无需考虑子组件的宽度和高度。
 
           下面的例子使用flex实现左侧固定宽度，右侧自适应布局:
-          \`\`\`json type="actions" file="左侧固定右侧自适应.json"
-          ["目标组件id","插槽id占位","addChild",{"title":"添加一个布局组件","comId":"u_flex1","ns":"布局组件","layout":{"width":"100%","height":60},"configs":[{"path":"常规/布局","value":{"display":"flex","flexDirection":"row","alignItems":"center"}}]}]
+          ${fileFormat({
+            fileName: "actions.json",
+            content: `["目标组件id","插槽id占位","addChild",{"title":"添加一个布局组件","comId":"u_flex1","ns":"布局组件","layout":{"width":"100%","height":60},"configs":[{"path":"常规/布局","value":{"display":"flex","flexDirection":"row","alignItems":"center"}}]}]
           ["u_flex1","插槽id占位","addChild",{"title":"左侧固定宽度组件","comId":"u_leftFixed","ns":"组件","layout":{"width":60,"height":40,"marginRight":8},"configs":[]}]
-          ["u_flex1","插槽id占位","addChild",{"title":"右侧自适应组件","comId":"u_rightFlex","ns":"组件","layout":{"width":'100%',"height":40},"configs":[]}]
-          \`\`\`
+          ["u_flex1","插槽id占位","addChild",{"title":"右侧自适应组件","comId":"u_rightFlex","ns":"组件","layout":{"width":'100%',"height":40},"configs":[]}]`,
+          })}
           在上例中:
             - 声明布局编辑器的值，注意布局编辑器必须声明，其中flexDirection也必须声明，关注justifyContent效果，默认为flex-start；
             - 左侧组件使用固定宽度，右侧组件使用width=100%(效果等同于flex=1)实现自适应宽度；
@@ -719,34 +713,37 @@ comId:_root_
           
           
           下面的例子使用flex进行嵌套，来实现左侧图标+文本，右侧箭头的布局:
-          \`\`\`json type="actions" file="flex嵌套实现左右布局.json"
-          ["目标组件id","插槽id占位","addChild",{"title":"添加一个布局组件","comId":"u_flex1","ns":"布局组件","layout":{"width":"100%","height":60},"configs":[{"path":"常规/布局","value":{"display":"flex","flexDirection":"row","justifyContent":"space-between","alignItems":"center"}}]}]
+          ${fileFormat({
+            fileName: "actions.json",
+            content: `["目标组件id","插槽id占位","addChild",{"title":"添加一个布局组件","comId":"u_flex1","ns":"布局组件","layout":{"width":"100%","height":60},"configs":[{"path":"常规/布局","value":{"display":"flex","flexDirection":"row","justifyContent":"space-between","alignItems":"center"}}]}]
           ["u_flex1","插槽id占位","addChild",{"title":"左侧布局组件","comId":"u_leftLayout","ignore": true,"ns":"布局组件","layout":{"width":"fit-content","height":"fit-content"},"configs":[{"path":"常规/布局","value":{"display":"flex","flexDirection":"row","alignItems":"center", "justifyContent": "flex-start"}}]}]
           ["u_leftLayout","插槽id占位","addChild",{"title":"图标组件","comId":"u_icon","ns":"图标组件","layout":{"width":24,"height":24,"marginRight":8},"configs":[]}]
           ["u_leftLayout","插槽id占位","addChild",{"title":"文本组件","comId":"u_text","ns":"文本组件","layout":{"width":"fit-content","height":"fit-content"},"configs":[]}]
-          ["u_flex1","插槽id占位","addChild",{"title":"箭头图标组件","comId":"u_arrowIcon","ns":"图标组件","layout":{"width":24,"height":24},"configs":[]}]
-          \`\`\`
+          ["u_flex1","插槽id占位","addChild",{"title":"箭头图标组件","comId":"u_arrowIcon","ns":"图标组件","layout":{"width":24,"height":24},"configs":[]}]`,
+          })}
           在上例中:
             - 声明布局编辑器的值，注意布局编辑器必须声明，其中flexDirection也必须声明；
             - 使用嵌套布局来完成左侧多元素 + 右侧单元素的布局，默认justifyContent=flex-start，所以左侧布局无需设置；
             - 左侧的图标+文本使用嵌套布局实现，且添加ignore标记，表示仅承担布局功能；
 
           下面的例子使用flex实现垂直居中布局:
-          \`\`\`json type="actions" file="垂直居中布局.json"
-          ["目标组件id","插槽id占位","addChild",{"title":"添加一个布局组件","comId":"u_flex2","ns":"布局组件","layout":{"width":"100%","height":120},"configs":[{"path":"常规/布局","value":{"display":"flex","flexDirection":"column","alignItems":"center"}}]}]
-          ["u_flex2","插槽id占位","addChild",{"title":"子组件","comId":"u_child","ns":"组件","layout":{"width":80,"height":80},"configs":[]}]
-          \`\`\`
+          ${fileFormat({
+            fileName: "actions.json",
+            content: `["目标组件id","插槽id占位","addChild",{"title":"添加一个布局组件","comId":"u_flex2","ns":"布局组件","layout":{"width":"100%","height":120},"configs":[{"path":"常规/布局","value":{"display":"flex","flexDirection":"column","alignItems":"center"}}]}]
+          ["u_flex2","插槽id占位","addChild",{"title":"子组件","comId":"u_child","ns":"组件","layout":{"width":80,"height":80},"configs":[]}]`,
+          })}
           在上例中:
             - 声明布局编辑器的值，注意布局编辑器必须声明，其中flexDirection声明成column；
             - 通过alignItems来实现子组件的垂直居中； 
 
           下面的例子使用flex进行横向均分或等分布局，实现一行N列的效果:
-          \`\`\`json type="actions" file="一行N列布局.json"
-          ["目标组件id","插槽id占位","addChild",{"title":"添加一个布局组件","comId":"u_flex0","ignore": true,"ns":"布局组件","layout":{"width":"100%","height":120},"configs":[{"path":"常规/布局","value":{"display":"flex","flexDirection":"row","justifyContent":"space-between","alignItems":"center"}}]}]
+          ${fileFormat({
+            fileName: "actions.json",
+            content: `["目标组件id","插槽id占位","addChild",{"title":"添加一个布局组件","comId":"u_flex0","ignore": true,"ns":"布局组件","layout":{"width":"100%","height":120},"configs":[{"path":"常规/布局","value":{"display":"flex","flexDirection":"row","justifyContent":"space-between","alignItems":"center"}}]}]
           ["u_flex0","插槽id占位","addChild",{"title":"A组件","comId":"u_a","ns":"组件","layout":{"width":40,"height":40},"configs":[]}]
           ["u_flex0","插槽id占位","addChild",{"title":"B组件","comId":"u_b","ns":"组件","layout":{"width":40,"height":40},"configs":[]}]
-          ["u_flex0","插槽id占位","addChild",{"title":"C组件","comId":"u_c","ns":"组件","layout":{"width":40,"height":40},"configs":[]}]
-          \`\`\`
+          ["u_flex0","插槽id占位","addChild",{"title":"C组件","comId":"u_c","ns":"组件","layout":{"width":40,"height":40},"configs":[]}]`,
+          })}
           在上例中:
             - 声明布局编辑器的值，注意布局编辑器必须声明，其中flexDirection也必须声明；
             - 针对内容元素的尺寸，配置合理的高度，防止内容溢出；
@@ -754,11 +751,12 @@ comId:_root_
             - 判断仅布局，添加ignore标记，优化搭建内容。
 
           特殊地，在flex布局中的元素还可以配置position=absolute，用于实现绝对定位效果:
-          \`\`\`json type="actions" file="绝对定位效果.json"
-          ["目标组件id","插槽id占位","addChild",{"title":"添加一个布局组件","comId":"u_flex3","ns":"布局组件","layout":{"width":"100%","height":200},"configs":[{"path":"常规/布局","value":{"display":"flex","flexDirection":"row","alignItems":"center"}}]}]
+          ${fileFormat({
+            fileName: "actions.json",
+            content: `["目标组件id","插槽id占位","addChild",{"title":"添加一个布局组件","comId":"u_flex3","ns":"布局组件","layout":{"width":"100%","height":200},"configs":[{"path":"常规/布局","value":{"display":"flex","flexDirection":"row","alignItems":"center"}}]}]
           ["u_flex3","插槽id占位","addChild",{"title":"绝对定位组件","comId":"u_absolute","ns":"组件","layout":{"position":"absolute","width":100,"height":40,"top":20,"left":20},"configs":[]}]
-          ["u_flex3","插槽id占位","addChild",{"title":"普通组件","comId":"u_normal","ns":"组件","layout":{"width":80,"height":80},"configs":[]}]
-          \`\`\`
+          ["u_flex3","插槽id占位","addChild",{"title":"普通组件","comId":"u_normal","ns":"组件","layout":{"width":80,"height":80},"configs":[]}]`,
+          })}
           在上例中:
             - 声明布局编辑器的值，注意布局编辑器必须声明，其中flexDirection也必须声明；
             - 通过layout中的属性，设置成绝对定位效果，在一些特殊的角标等场景下很有效果；
@@ -809,10 +807,6 @@ comId:_root_
   <允许使用的图标>
   antd中的图标
   </允许使用的图标>
-
-  <返回的文件格式>
-  必须为\`\`\`json file="actions.json" \`\`\`格式的操作列表，其中 file="actions.json" 不可省略，否则无法区分。
-  </返回的文件格式>
 </对于当前搭建有以下特殊上下文>
 
 <按照以下情况分别处理>
@@ -903,8 +897,9 @@ comId:_root_
         - 中部是卡片概览，一行三列等分，我们使用一个自定义容器来均分三列；
         - 底部是表格，表格外使用自定义容器配置背景和圆角，内部使用表格配置多列，并且配置合理的分页信息
 
-      \`\`\`json type="actions" file="云服务器管理页面生成步骤.json"
-      ["_root_",":root","doConfig",{"path":"root/样式","style":{"background":"#f5f5f5"}}]
+        ${fileFormat({
+          fileName: "actions.json",
+          content: `["_root_",":root","doConfig",{"path":"root/样式","style":{"background":"#f5f5f5"}}]
       ["_root_",":root","doConfig",{"path":"root/布局","value":{"display":"flex", "flexDirection": "column"}}]
       ["_root_","_rootSlot_","addChild",{"title": "页面布局", "ns": "mybricks.basic-comlib.antd5.grid", "comId": "u_page", "layout": {"width": "100%", "height": "fit-content"}, configs: [{"path": "常规/行列数据", "value": [{ "key": "row1", "cols": [{ "key": "col1", "width": 200 }, { "key": "col2", "width": "auto" }] }] }] }]
       ["u_page","col1","addChild",{"title":"左侧容器","ns":"mybricks.normal-pc.antd5.custom-container","comId":"u_left","layout":{"width":"100%","height":'fit-content',"marginRight":12},"configs":[{"path":"常规/布局","value":{"display":"flex", "flexDirection": "column"}}]}]
@@ -913,9 +908,9 @@ comId:_root_
       ["u_page","col2","addChild",{"title":"右侧容器","ns":"mybricks.normal-pc.antd5.custom-container","comId":"u_right","layout":{"width":"100%","height":'fit-content'},"configs":[{"path":"常规/布局","value":{"display":"flex", "flexDirection": "column"}}]}]
       ["u_right","content","addChild", 顶部个人信息]
       ["u_right","content","addChild", 卡片概览]
-      ["u_right","content","addChild", 底部表格]
-      \`\`\`
-    
+      ["u_right","content","addChild", 底部表格]`,
+        })}
+
     在上述内容中：
     我们遵循了以下关键事项：
     流程：从「根组件布局设计」-> 「考虑是否使用grid布局」-> 从上往下分区开始搭建内容。
@@ -941,9 +936,10 @@ comId:_root_
         文档的详情内容，其中
           - 文章头部的高度设置fit-content，保证头部内容能完整展示；
           - 文章内容直接使用flex纵向布局，保证内容增长时容器变高；
-        
-      \`\`\`json type="actions" file="播客详情页面生成步骤.json"
-      ["_root_",":root","doConfig",{"path":"root/样式","style":{"background":"#f5f5f5"}}]
+
+      ${fileFormat({
+        fileName: "actions.json",
+        content: `["_root_",":root","doConfig",{"path":"root/样式","style":{"background":"#f5f5f5"}}]
       ["_root_",":root","doConfig",{"path":"root/布局","value":{"display":"flex", "flexDirection": "column"}}]
       ["_root_","_rootSlot_","addChild",{"title": "顶部导航", "ns": "mybricks.normal-pc.antd5.custom-container", "comId": "u_navs", "layout": {"width": "100%", "height": 60, "marginBottom": 24}, configs: [{"path":"常规/布局","value":{"display":"flex", "flexDirection": "row", "alignItems": "center", "justifyContent": "space-between"}}] }]
       ["u_navs","content","addChild", {"title": "左侧菜单", "ns": "菜单", "comId": "u_leftMenu", "layout": {"width": '100%', "height": 'fit-content', "marginLeft": 12}, configs: [] }]
@@ -951,8 +947,8 @@ comId:_root_
       ["_root_","_rootSlot_","addChild",{"title": "详情内容", "ns": "mybricks.normal-pc.antd5.custom-container", "comId": "u_detail", "layout": {"width": "100%", "height": 'fit-content', marginTop: 12, marginLeft: 12, marginRight: 12}, configs: [{"path":"常规/布局","value":{"display":"flex", "flexDirection": "column"}}] }]
       ["u_detail","content","addChild",{"title": "文章头部", "ns": "mybricks.normal-pc.antd5.custom-container", "comId": "u_header", "layout": {"width": "100%", "height": fit-content'}, configs: [{"path":"常规/布局","value":{"display":"flex", "flexDirection": "column"}}] }]
       ["u_detail","content","addChild",{"title": "文章内容", "ns": "mybricks.normal-pc.antd5.custom-container", "comId": "u_header", "layout": {"width": "100%", "height": 'fit-content', marginTop: 20}, configs: [{"path":"常规/布局","value":{"display":"flex", "flexDirection": "column"}}] }]
-      // ...
-      \`\`\`
+      // ...`,
+      })}
     
     在上述内容中：
     我们遵循了以下关键事项：
@@ -969,13 +965,14 @@ comId:_root_
     <assistant_response>
       好的，一行三列的导航考察的是我们布局的关键知识，一行三列，就是均分布局，均分我们一般选择使用flex布局。
       所以提供一个flex容器，确定子组件的宽度，并将内容平铺上去。
-      
-    \`\`\`json type="actions" file="一行三列导航生成步骤.json"
-    ["_root_",":root","doConfig",{"path":"root/标题","value":"一行三列的导航"}]
+
+    ${fileFormat({
+      fileName: "actions.json",
+      content: `["_root_",":root","doConfig",{"path":"root/标题","value":"一行三列的导航"}]
     ["_root_",":root","doConfig",{"path":"root/布局","value":{"display":"flex","flexDirection":"column","alignItems":"center"}}]
     ["_root_","_rootSlot_","addChild",{"title":"Flex容器","ns":"some.container","comId":"u_iiusd7","layout":{"width":"100%","height":200,"marginLeft":8,"marginRight":8},"configs":[{"path":"常规/布局","value":{"display":"flex","flexDirection":"row","justifyContent":"space-between","alignItems":"center","flexWrap":"wrap"}}]}]
-    ["u_iiusd7","content","addChild",{"title":"导航1","ns":"some.icon","comId":"u_icon1","layout":{"width":120,"height":120,"marginTop":8},"configs":[{"path":"样式/文本","style":{"background":"#0000FF"}}]}]
-    \`\`\`
+    ["u_iiusd7","content","addChild",{"title":"导航1","ns":"some.icon","comId":"u_icon1","layout":{"width":120,"height":120,"marginTop":8},"configs":[{"path":"样式/文本","style":{"background":"#0000FF"}}]}]`,
+    })}
 
     注意：
       - 这个Flex容器是根组件的直接子组件，所以不允许添加ignore标记。
@@ -997,7 +994,7 @@ requestAI({
   message: "搭建一个生日贺卡页面",
   execute: (params: { files: any[] }) => {
     console.log("[execute - files]", params.files);
-    return "";
+    return "调用工具成功";
   },
   emits: {
     write: (content: string) => {
