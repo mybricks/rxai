@@ -10,7 +10,7 @@ interface RegisterParams {
 interface RequestParams {
   message: string | ChatMessages[0];
   emits: Emits;
-  execute: (params: { files: any[] }) => string;
+  execute: (params: { files: any[]; toolName: string }) => string;
 }
 
 class Rxai extends BaseAgent {

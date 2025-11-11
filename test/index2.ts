@@ -1019,7 +1019,7 @@ mock({
 
 requestAI({
   message: "搭建一个生日贺卡页面",
-  execute: (params: { files: any[] }) => {
+  execute: (params: { files: any[]; toolName: string }) => {
     console.log("[execute - params]", params);
     return "调用工具成功";
   },
