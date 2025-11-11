@@ -64,5 +64,20 @@ export function parseFileBlocks(content: string) {
     });
   }
 
-  return results;
+  const files: any = {};
+
+  results.forEach((result) => {
+    if (!files[result.fileName]) {
+      files[result.fileName] = result;
+    } else {
+      const sameNameFiles = files[result.fileName];
+      if (Array.isArray(sameNameFiles)) {
+        sameNameFiles.push(result);
+      } else {
+        files[result.fileName] = [files[result.fileName], result];
+      }
+    }
+  });
+
+  return files;
 }
