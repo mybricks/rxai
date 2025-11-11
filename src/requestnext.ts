@@ -1,7 +1,3 @@
-interface Request {
-  requestAsStream: (messages: ChatMessages, emits: Emits) => void;
-}
-
 interface RequestCompleteResult {
   type: "complete";
   content: string;
@@ -22,12 +18,18 @@ type RequestResult =
   | RequestErrorResult
   | RequestCancelResult;
 
+interface ExtendParams {
+  aiRole?: Tool["aiRole"];
+}
+
 class ApiRequestClient {
   async requestAsStream(
     messages: ChatMessages,
     emits: Emits,
+    extendParams: ExtendParams,
   ): Promise<RequestResult> {
     return new Promise((resolve) => {
+      console.log("[extendParams]", extendParams);
       let content = "";
       const emitsProxy: Emits = {
         write(chunk) {
@@ -60,19 +62,24 @@ class ApiRequestClient {
         },
       };
 
-      requestAsStream({ messages, emits: emitsProxy });
+      requestAsStream({
+        messages,
+        emits: emitsProxy,
+        extendParams: transfromExtendParams(extendParams),
+      });
     });
   }
 }
 
-const requestAsStream = (params: { messages: ChatMessages; emits: Emits }) => {
-  const { messages, emits } = params;
+const requestAsStream = (params: {
+  messages: ChatMessages;
+  emits: Emits;
+  extendParams: Record<string, unknown>;
+}) => {
+  const { messages, emits, extendParams } = params;
   const { cancel, write, complete, error } = emits;
 
   try {
-    // const model = `anthropic/claude-sonnet-4`;
-    const model = `gpt-5-mini`;
-
     const controller = new AbortController();
     fetch("http://ai.mybricks.world/stream-test", {
       signal: controller.signal,
@@ -82,7 +89,7 @@ const requestAsStream = (params: { messages: ChatMessages; emits: Emits }) => {
       },
       body: JSON.stringify({
         messages,
-        model,
+        ...extendParams,
       }),
     }).then(async (response) => {
       cancel(() => {
@@ -109,6 +116,46 @@ const requestAsStream = (params: { messages: ChatMessages; emits: Emits }) => {
   } catch (ex) {
     error(ex as any);
   }
+};
+
+const transfromExtendParams = (extendParams: ExtendParams) => {
+  const { aiRole } = extendParams;
+  let model = "deepseek-chat";
+  let role = "default";
+
+  if (!aiRole) {
+    return {
+      model,
+      role,
+    };
+  }
+
+  switch (true) {
+    case ["image"].includes(aiRole): {
+      model = "anthropic/claude-sonnet-4";
+      role = "image";
+      break;
+    }
+    case ["architect"].includes(aiRole): {
+      model = "google/gemini-2.5-pro-preview";
+      role = "architect";
+      break;
+    }
+    case ["expert"].includes(aiRole): {
+      model = "anthropic/claude-sonnet-4";
+      role = "expert";
+      break;
+    }
+    default: {
+      role = "default";
+      break;
+    }
+  }
+
+  return {
+    model,
+    role,
+  };
 };
 
 export { ApiRequestClient };

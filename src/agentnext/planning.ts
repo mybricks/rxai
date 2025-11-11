@@ -76,7 +76,11 @@ class PlanningAgent extends BaseAgent {
       },
       ...this.messages,
     ];
-    const response = await this.request.requestAsStream(messages, emitsProxy);
+    const response = await this.request.requestAsStream(
+      messages,
+      emitsProxy,
+      {},
+    );
 
     if (response.type === "complete") {
       const match = response.content!.match(
@@ -143,7 +147,11 @@ class PlanningAgent extends BaseAgent {
         },
         ...this.messages,
       ];
-      const response = await this.request.requestAsStream(messages, emitsProxy);
+      const response = await this.request.requestAsStream(
+        messages,
+        emitsProxy,
+        { aiRole: tool.aiRole },
+      );
 
       if (response.type === "complete") {
         const files = parseFileBlocks(response.content);

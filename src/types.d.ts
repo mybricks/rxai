@@ -16,8 +16,9 @@ interface Tool {
   name: string;
   description: string;
   getPrompts: () => string;
-  execute: (
-    content: string,
-    type: "write" | "complete" | "error" | "cancel",
-  ) => string | void;
+  aiRole?: "image" | "architect" | "expert";
+  // execute: (
+  //   content: string,
+  //   type: "write" | "complete" | "error" | "cancel",
+  // ) => string | void;
 }

@@ -1,6 +1,9 @@
 import { register, requestAI } from "../src";
 
-const pageScene = {
+const pageScene: {
+  name: string;
+  tools: Tool[];
+} = {
   name: "single-page",
   tools: [
     {
@@ -405,15 +408,7 @@ const pageScene = {
 </examples>
 `;
       },
-      execute: (
-        content: string,
-        type: "write" | "complete" | "error" | "cancel",
-      ) => {
-        if (type === "complete") {
-          console.log("[get-components-doc-and-prd - execute]", content);
-          return content;
-        }
-      },
+      aiRole: "expert",
     },
     {
       name: "generate-page",
@@ -991,15 +986,7 @@ comId:_root_
 
 `;
       },
-      execute: (
-        content: string,
-        type: "write" | "complete" | "error" | "cancel",
-      ) => {
-        if (type === "complete") {
-          console.log("[get-components-doc-and-prd - execute]", content);
-          return content;
-        }
-      },
+      aiRole: "expert",
     },
   ],
 };
