@@ -1,4 +1,4 @@
-import { register, requestAI, fileFormat } from "../src";
+import { register, requestAI, fileFormat, mock } from "../src";
 
 const pageScene: {
   name: string;
@@ -989,6 +989,32 @@ comId:_root_
 };
 
 register(pageScene);
+
+mock(() => {
+  return `
+添加一个fixed定位组件
+\`\`\`json file="actions.json"
+[
+  "_root_",
+  "_rootSlot_",
+  "addChild",
+  {
+    "title": "添加一个固定定位组件",
+    "comId": "u_fixed",
+    "ns": "组件",
+    "layout": {
+      "position": "fixed",
+      "width": "100%",
+      "height": 84,
+      "bottom": 0,
+      "left": 0
+    },
+    "configs": []
+  }
+]
+\`\`\`
+  `;
+});
 
 requestAI({
   message: "搭建一个生日贺卡页面",
