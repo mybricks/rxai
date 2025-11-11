@@ -990,8 +990,9 @@ comId:_root_
 
 register(pageScene);
 
-mock(() => {
-  return `
+mock({
+  toolName: "hello",
+  result: `
 添加一个fixed定位组件
 \`\`\`json file="actions.json"
 [
@@ -1013,13 +1014,13 @@ mock(() => {
   }
 ]
 \`\`\`
-  `;
+  `,
 });
 
 requestAI({
   message: "搭建一个生日贺卡页面",
   execute: (params: { files: any[] }) => {
-    console.log("[execute - files]", params.files);
+    console.log("[execute - params]", params);
     return "调用工具成功";
   },
   emits: {

@@ -3,7 +3,7 @@ import { parseFileBlocks } from "../tool/util";
 
 const rxai = new Rxai();
 
-let mockFn: (() => string) | null = null;
+let mockFn: (() => any) | null = null;
 
 const register = (params: RegisterParams) => {
   rxai.register(params);
@@ -11,16 +11,19 @@ const register = (params: RegisterParams) => {
 
 const requestAI = (params: RequestParams) => {
   if (mockFn) {
-    params.execute({
-      files: parseFileBlocks(mockFn()),
-    });
+    params.execute(mockFn());
   } else {
     rxai.requestAI(params);
   }
 };
 
-const mock = (fn: () => string) => {
-  mockFn = fn;
+const mock = (params: { toolName: string; result: string }) => {
+  mockFn = () => {
+    return {
+      toolName: params.toolName,
+      files: parseFileBlocks(params.result),
+    };
+  };
 };
 
 export { register, requestAI, mock };
