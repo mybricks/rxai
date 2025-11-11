@@ -11,19 +11,18 @@ const register = (params: RegisterParams) => {
 
 const requestAI = (params: RequestParams) => {
   if (mockFn) {
-    params.execute(mockFn());
+    const mock = mockFn();
+    params.execute({
+      toolName: mock.toolName,
+      files: parseFileBlocks(mock.result),
+    });
   } else {
     rxai.requestAI(params);
   }
 };
 
-const mock = (params: { toolName: string; result: string }) => {
-  mockFn = () => {
-    return {
-      toolName: params.toolName,
-      files: parseFileBlocks(params.result),
-    };
-  };
+const mock = (fn: () => { toolName: string; result: string }) => {
+  mockFn = fn;
 };
 
 export { register, requestAI, mock };
