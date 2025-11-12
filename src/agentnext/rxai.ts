@@ -12,6 +12,7 @@ interface RequestParams {
   message: string | ChatMessages[0];
   emits: Emits;
   key: string;
+  attachements: Attachement[];
 }
 
 class Rxai extends BaseAgent {
@@ -31,7 +32,7 @@ class Rxai extends BaseAgent {
   }
 
   async requestAI(params: RequestParams) {
-    const { message, emits, key } = params;
+    const { message, emits, key, attachements } = params;
     const index = this.cacheIndex++;
     const planningAgent = new PlanningAgent({
       request: new ApiRequestClient({ mode: getMode() }),
@@ -44,7 +45,31 @@ class Rxai extends BaseAgent {
       key,
     });
 
-    await planningAgent.run(message);
+    const nextMessage = attachements?.length
+      ? {
+          role: "user",
+          content: [
+            {
+              type: "text",
+              text: message,
+            },
+            ...attachements
+              .filter((attachement) => {
+                return attachement.type === "image";
+              })
+              .map((attachement) => {
+                return {
+                  type: "image_url",
+                  image_url: {
+                    url: attachement.content,
+                  },
+                };
+              }),
+          ],
+        }
+      : message;
+
+    await planningAgent.run(nextMessage);
 
     this.cacheMessages[index] = planningAgent.getMessages();
   }

@@ -19,3 +19,10 @@ interface Tool {
 }
 
 type Mode = "production" | "development";
+
+interface Attachement {
+  type: "image";
+  content: string;
+  title?: string;
+  size?: number;
+}
