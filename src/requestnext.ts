@@ -118,7 +118,7 @@ const requestAsStream = (params: {
 
 const transfromExtendParams = (extendParams: ExtendParams) => {
   const { aiRole } = extendParams;
-  let model = "deepseek-chat";
+  let model = "openai/gpt-5-mini";
   let role = "default";
 
   if (!aiRole) {
