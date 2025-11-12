@@ -15,12 +15,16 @@ interface Tool {
   description: string;
   getPrompts: () => string;
   aiRole?: "image" | "architect" | "expert";
-  execute: (params: { files: any[]; key: string }) => string;
+  execute: (params: {
+    files: any[];
+    key: string;
+    attachments: Attachment[];
+  }) => string;
 }
 
 type Mode = "production" | "development";
 
-interface Attachement {
+interface Attachment {
   type: "image";
   content: string;
   title?: string;

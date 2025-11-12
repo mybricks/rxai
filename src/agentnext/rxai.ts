@@ -9,10 +9,10 @@ interface RegisterParams {
 }
 
 interface RequestParams {
-  message: string | ChatMessages[0];
+  message: string;
   emits: Emits;
   key: string;
-  attachements: Attachement[];
+  attachments: Attachment[];
 }
 
 class Rxai extends BaseAgent {
@@ -32,7 +32,7 @@ class Rxai extends BaseAgent {
   }
 
   async requestAI(params: RequestParams) {
-    const { message, emits, key, attachements } = params;
+    const { message, emits, key, attachments } = params;
     const index = this.cacheIndex++;
     const planningAgent = new PlanningAgent({
       request: new ApiRequestClient({ mode: getMode() }),
@@ -43,33 +43,11 @@ class Rxai extends BaseAgent {
       system: this.system,
       emits,
       key,
+      message,
+      attachments,
     });
 
-    const nextMessage = attachements?.length
-      ? {
-          role: "user",
-          content: [
-            {
-              type: "text",
-              text: message,
-            },
-            ...attachements
-              .filter((attachement) => {
-                return attachement.type === "image";
-              })
-              .map((attachement) => {
-                return {
-                  type: "image_url",
-                  image_url: {
-                    url: attachement.content,
-                  },
-                };
-              }),
-          ],
-        }
-      : message;
-
-    await planningAgent.run(nextMessage);
+    await planningAgent.run();
 
     this.cacheMessages[index] = planningAgent.getMessages();
   }
