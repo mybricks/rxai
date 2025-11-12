@@ -15,11 +15,7 @@ interface Tool {
   description: string;
   getPrompts: (params: { attachments: Attachment[] }) => string;
   aiRole?: "image" | "architect" | "expert";
-  execute: (params: {
-    files: any[];
-    key: string;
-    attachments: Attachment[];
-  }) => string;
+  execute: (params: { files: any[]; key: string }) => string;
 }
 
 type Mode = "production" | "development";
