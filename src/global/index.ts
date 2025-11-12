@@ -1,15 +1,34 @@
 import { Rxai, RegisterParams, RequestParams } from "../agent/rxai";
 import { parseFileBlocks } from "../tool/util";
+import { requestAsStream } from "../request/preset/mybricks";
 
-const rxai = new Rxai();
+let rxai: Rxai;
 
-let mockFn: (() => any) | null = null;
+let mockFn:
+  | (() => {
+      toolName: string;
+      result: string;
+      key: string;
+    })
+  | null = null;
+
+const ensure = () => {
+  if (!rxai) {
+    rxai = new Rxai({
+      request: {
+        requestAsStream: requestAsStream,
+      },
+    });
+  }
+};
 
 const register = (params: RegisterParams) => {
+  ensure();
   rxai.register(params);
 };
 
 const requestAI = (params: RequestParams) => {
+  ensure();
   if (mockFn) {
     const mock = mockFn();
     const tool = Object.entries(rxai.scenes)
@@ -32,7 +51,7 @@ const requestAI = (params: RequestParams) => {
   }
 };
 
-const mock = (fn: () => { toolName: string; result: string }) => {
+const mock = (fn: typeof mockFn) => {
   mockFn = fn;
 };
 

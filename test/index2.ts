@@ -1,4 +1,5 @@
 import { register, requestAI, fileFormat, mock } from "../src";
+(window as any)._rxai_request_mybricks_mode_ = "development";
 
 const pageScene: {
   name: string;

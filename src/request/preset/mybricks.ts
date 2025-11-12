@@ -1,127 +1,3 @@
-interface RequestCompleteResult {
-  type: "complete";
-  content: string;
-}
-
-interface RequestErrorResult {
-  type: "error";
-  content: Error;
-}
-
-interface RequestCancelResult {
-  type: "cancel";
-  content: string;
-}
-
-type RequestResult =
-  | RequestCompleteResult
-  | RequestErrorResult
-  | RequestCancelResult;
-
-interface ExtendParams {
-  aiRole?: Tool["aiRole"];
-}
-
-interface ApiRequestClientOptions {
-  mode: Mode;
-}
-
-class ApiRequestClient {
-  private mode: Mode;
-
-  constructor(options: ApiRequestClientOptions) {
-    this.mode = options.mode;
-  }
-
-  async requestAsStream(
-    messages: ChatMessages,
-    emits: Emits,
-    extendParams: ExtendParams,
-  ): Promise<RequestResult> {
-    return new Promise((resolve) => {
-      let content = "";
-      const emitsProxy: Emits = {
-        write(chunk) {
-          emits.write(chunk);
-          content += chunk;
-        },
-        complete() {
-          emits.complete(content);
-          resolve({
-            type: "complete",
-            content,
-          });
-        },
-        error(ex) {
-          emits.error(ex);
-          resolve({
-            type: "error",
-            content: ex,
-          });
-        },
-        cancel(fn) {
-          emits.cancel(() => {
-            resolve({
-              type: "cancel",
-              content,
-            });
-            fn();
-          });
-        },
-      };
-
-      requestAsStream({
-        messages,
-        emits: emitsProxy,
-        mode: this.mode,
-        extendParams: transfromExtendParams(extendParams),
-      });
-    });
-  }
-}
-
-const transfromExtendParams = (extendParams: ExtendParams) => {
-  const { aiRole } = extendParams;
-  let model = "openai/gpt-5-mini";
-  let role = "default";
-
-  if (!aiRole) {
-    return {
-      model,
-      role,
-    };
-  }
-
-  switch (true) {
-    case ["image"].includes(aiRole): {
-      model = "anthropic/claude-sonnet-4";
-      role = "image";
-      break;
-    }
-    case ["architect"].includes(aiRole): {
-      model = "google/gemini-2.5-pro-preview";
-      role = "architect";
-      break;
-    }
-    case ["expert"].includes(aiRole): {
-      model = "anthropic/claude-sonnet-4";
-      role = "expert";
-      break;
-    }
-    default: {
-      role = "default";
-      break;
-    }
-  }
-
-  return {
-    model,
-    role,
-  };
-};
-
-export { ApiRequestClient };
-
 import forge from "node-forge";
 
 function generateRandomKey(length: number) {
@@ -239,18 +115,61 @@ async function checkFetchTarget(): Promise<FetchTarget> {
   return (fetchTaget = FetchTarget.Center);
 }
 
+const transfromExtendParams = (extendParams: { aiRole?: AiRole }) => {
+  const { aiRole } = extendParams;
+  let model = "openai/gpt-5-mini";
+  let role = "default";
+
+  if (!aiRole) {
+    return {
+      model,
+      role,
+    };
+  }
+
+  switch (true) {
+    case ["image"].includes(aiRole): {
+      model = "anthropic/claude-sonnet-4";
+      role = "image";
+      break;
+    }
+    case ["architect"].includes(aiRole): {
+      model = "google/gemini-2.5-pro-preview";
+      role = "architect";
+      break;
+    }
+    case ["expert"].includes(aiRole): {
+      model = "anthropic/claude-sonnet-4";
+      role = "expert";
+      break;
+    }
+    default: {
+      role = "default";
+      break;
+    }
+  }
+
+  return {
+    model,
+    role,
+  };
+};
+
 const requestAsStream = async (params: {
   messages: ChatMessages;
   emits: Emits;
-  mode: Mode;
-  extendParams: Record<string, string>;
+  aiRole?: AiRole;
 }) => {
-  const { messages, emits, mode, extendParams } = params;
+  const { messages, emits, aiRole } = params;
   const { cancel, write, complete, error } = emits;
+
+  const mode = (window as any)._rxai_request_mybricks_mode_ || "production";
 
   if (mode !== "development") {
     await checkFetchTarget();
   }
+
+  const extendParams = transfromExtendParams({ aiRole });
 
   try {
     const controller = new AbortController();
@@ -316,3 +235,5 @@ const requestAsStream = async (params: {
     error(ex as any);
   }
 };
+
+export { requestAsStream };

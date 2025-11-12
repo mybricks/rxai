@@ -1,7 +1,6 @@
 import { BaseAgent } from "../agent/base";
 import { PlanningAgent } from "../agent/planning";
-import { ApiRequestClient } from "../request";
-import { getMode } from "../storage/getMode";
+import { Request, RequestOptions } from "../request/request";
 
 interface RegisterParams {
   name: string;
@@ -12,18 +11,24 @@ interface RequestParams {
   message: string;
   emits: Emits;
   key: string;
-  attachments: Attachment[];
+  attachments?: Attachment[];
+}
+
+interface RxaiOptions {
+  request: RequestOptions;
 }
 
 class Rxai extends BaseAgent {
   private cacheMessages: ChatMessages[] = [];
   private cacheIndex: number = 0;
+
   // 场景
   scenes: Record<string, RegisterParams> = {};
 
-  constructor() {
+  constructor(options: RxaiOptions) {
     super({
-      system: { title: "MyBricks" },
+      ...options,
+      requestInstance: new Request(options.request),
     });
   }
 
@@ -35,7 +40,7 @@ class Rxai extends BaseAgent {
     const { message, emits, key, attachments } = params;
     const index = this.cacheIndex++;
     const planningAgent = new PlanningAgent({
-      request: new ApiRequestClient({ mode: getMode() }),
+      requestInstance: this.requestInstance,
       tools: Object.entries(this.scenes).reduce((pre, [, value]) => {
         pre.push(...value.tools);
         return pre;

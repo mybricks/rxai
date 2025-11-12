@@ -1,5 +1,3 @@
-import { ApiRequestClient } from "../request";
-// import { Tool, RxToolContext } from "../tool/base";
 import { getSystemPrompt } from "../prompt/planning";
 import { BaseAgent, BaseAgentOptions } from "./base";
 import { parseFileBlocks } from "../tool/util";
@@ -7,11 +5,10 @@ import { getToolPrompt } from "../prompt/tool";
 
 interface PlanningAgentOptions extends BaseAgentOptions {
   emits: Emits;
-  request: ApiRequestClient;
   tools: Tool[];
   key: string;
   message: string;
-  attachments: Attachment[];
+  attachments?: Attachment[];
 }
 
 /**
@@ -21,16 +18,14 @@ interface PlanningAgentOptions extends BaseAgentOptions {
 class PlanningAgent extends BaseAgent {
   planList: { name: string; done: boolean; pending: boolean }[] = [];
   planIndex: number = 0;
-  private request: ApiRequestClient;
   private tools: Tool[];
   private emits: Emits;
   private key: string;
   private message: string;
-  private attachments: Attachment[];
+  private attachments?: Attachment[];
 
   constructor(options: PlanningAgentOptions) {
     super(options);
-    this.request = options.request;
     this.tools = options.tools;
     this.emits = options.emits;
     this.key = options.key;
@@ -102,11 +97,11 @@ class PlanningAgent extends BaseAgent {
       },
       ...this.messages,
     ];
-    const response = await this.request.requestAsStream(
+    const response = await this.requestInstance.requestAsStream({
       messages,
-      emitsProxy,
-      {},
-    );
+      emits: emitsProxy,
+      aiRole: "plan",
+    });
 
     if (response.type === "complete") {
       const match = response.content!.match(
@@ -176,11 +171,11 @@ class PlanningAgent extends BaseAgent {
         },
         ...this.messages,
       ];
-      const response = await this.request.requestAsStream(
+      const response = await this.requestInstance.requestAsStream({
         messages,
-        emitsProxy,
-        { aiRole: tool.aiRole },
-      );
+        emits: emitsProxy,
+        aiRole: tool.aiRole,
+      });
 
       if (response.type === "complete") {
         const files = parseFileBlocks(response.content);
