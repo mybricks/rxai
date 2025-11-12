@@ -3,8 +3,6 @@ type ChatMessages = {
   content: unknown;
 }[];
 
-type Step = { name: string; done: boolean };
-
 interface Emits {
   write: (chunk: string) => void;
   complete: (content: string) => void;
@@ -15,7 +13,16 @@ interface Emits {
 interface Tool {
   name: string;
   description: string;
-  getPrompts: () => string;
+  getPrompts: (params: { attachments: Attachment[] }) => string;
   aiRole?: "image" | "architect" | "expert";
   execute: (params: { files: any[]; key: string }) => string;
+}
+
+type Mode = "production" | "development";
+
+interface Attachment {
+  type: "image";
+  content: string;
+  title?: string;
+  size?: number;
 }

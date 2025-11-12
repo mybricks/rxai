@@ -10,6 +10,8 @@ interface PlanningAgentOptions extends BaseAgentOptions {
   request: ApiRequestClient;
   tools: Tool[];
   key: string;
+  message: string;
+  attachments: Attachment[];
 }
 
 /**
@@ -23,6 +25,8 @@ class PlanningAgent extends BaseAgent {
   private tools: Tool[];
   private emits: Emits;
   private key: string;
+  private message: string;
+  private attachments: Attachment[];
 
   constructor(options: PlanningAgentOptions) {
     super(options);
@@ -30,19 +34,40 @@ class PlanningAgent extends BaseAgent {
     this.tools = options.tools;
     this.emits = options.emits;
     this.key = options.key;
+    this.message = options.message;
+    this.attachments = options.attachments;
   }
 
   getMessages() {
     return this.messages;
   }
 
-  async run(content: string | ChatMessages[number]) {
-    // 推送用户需求
-    if (typeof content === "string") {
-      this.messages.push({ role: "user", content });
-    } else {
-      this.messages.push(content);
-    }
+  async run() {
+    const content = this.attachments?.length
+      ? [
+          {
+            type: "text",
+            text: this.message,
+          },
+          ...this.attachments
+            .filter((attachement) => {
+              return attachement.type === "image";
+            })
+            .map((attachement) => {
+              return {
+                type: "image_url",
+                image_url: {
+                  url: attachement.content,
+                },
+              };
+            }),
+        ]
+      : this.message;
+
+    this.messages.push({
+      role: "user",
+      content,
+    });
 
     const hasPlanList = await this.getPlanList();
     if (hasPlanList) {
@@ -103,6 +128,9 @@ class PlanningAgent extends BaseAgent {
           JSON.parse(JSON.stringify(this.planList)),
         );
         return true;
+      } else {
+        // 没有返回计划列表，结束
+        this.emits.complete(response.content);
       }
     } else {
       console.log("[PlanningAgent - 请求结果 - 失败/取消]", response);
@@ -144,7 +172,7 @@ class PlanningAgent extends BaseAgent {
       const messages = [
         {
           role: "system",
-          content: getToolPrompt(tool),
+          content: getToolPrompt(tool, { attachments: this.attachments }),
         },
         ...this.messages,
       ];
@@ -159,6 +187,7 @@ class PlanningAgent extends BaseAgent {
         const content = tool.execute({
           files,
           key: this.key,
+          attachments: this.attachments,
         });
         this.messages.push({ role: "assistant", content });
       }

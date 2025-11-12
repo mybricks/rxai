@@ -1,6 +1,7 @@
 import { BaseAgent } from "../agentnext/base";
 import { PlanningAgent } from "../agentnext/planning";
 import { ApiRequestClient } from "../requestnext";
+import { getMode } from "../storage/getMode";
 
 interface RegisterParams {
   name: string;
@@ -8,9 +9,10 @@ interface RegisterParams {
 }
 
 interface RequestParams {
-  message: string | ChatMessages[0];
+  message: string;
   emits: Emits;
   key: string;
+  attachments: Attachment[];
 }
 
 class Rxai extends BaseAgent {
@@ -30,10 +32,10 @@ class Rxai extends BaseAgent {
   }
 
   async requestAI(params: RequestParams) {
-    const { message, emits, key } = params;
+    const { message, emits, key, attachments } = params;
     const index = this.cacheIndex++;
     const planningAgent = new PlanningAgent({
-      request: new ApiRequestClient(),
+      request: new ApiRequestClient({ mode: getMode() }),
       tools: Object.entries(this.scenes).reduce((pre, [, value]) => {
         pre.push(...value.tools);
         return pre;
@@ -41,9 +43,11 @@ class Rxai extends BaseAgent {
       system: this.system,
       emits,
       key,
+      message,
+      attachments,
     });
 
-    await planningAgent.run(message);
+    await planningAgent.run();
 
     this.cacheMessages[index] = planningAgent.getMessages();
   }
