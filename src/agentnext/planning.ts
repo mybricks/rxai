@@ -103,6 +103,9 @@ class PlanningAgent extends BaseAgent {
           JSON.parse(JSON.stringify(this.planList)),
         );
         return true;
+      } else {
+        // 没有返回计划列表，结束
+        this.emits.complete(response.content);
       }
     } else {
       console.log("[PlanningAgent - 请求结果 - 失败/取消]", response);
