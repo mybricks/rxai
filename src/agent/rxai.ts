@@ -1,47 +1,56 @@
-import { Tool } from "../tool/base";
 import { BaseAgent } from "../agent/base";
 import { PlanningAgent } from "../agent/planning";
-import { Request, ApiRequestClient } from "../request";
+import { ApiRequestClient } from "../request";
+import { getMode } from "../storage/getMode";
 
-interface RxaiOptions {
-  request: Request;
-  tools?: (() => Tool)[];
-  system?: System;
+interface RegisterParams {
+  name: string;
+  tools: Tool[];
 }
 
-interface System {
-  title: string;
+interface RequestParams {
+  message: string;
+  emits: Emits;
+  key: string;
+  attachments: Attachment[];
 }
 
 class Rxai extends BaseAgent {
-  private request: Request;
   private cacheMessages: ChatMessages[] = [];
   private cacheIndex: number = 0;
-  private tools: (() => Tool)[];
-  constructor(options: RxaiOptions) {
+  // 场景
+  scenes: Record<string, RegisterParams> = {};
+
+  constructor() {
     super({
-      system: options.system || { title: "MyBricks" },
+      system: { title: "MyBricks" },
     });
-    this.request = options.request;
-    this.tools = options.tools || [];
   }
 
-  async requestAI(
-    content: string | { role: "user"; content: unknown },
-    emits: Emits,
-  ) {
+  register(params: RegisterParams) {
+    this.scenes[params.name] = params;
+  }
+
+  async requestAI(params: RequestParams) {
+    const { message, emits, key, attachments } = params;
     const index = this.cacheIndex++;
     const planningAgent = new PlanningAgent({
-      request: new ApiRequestClient(this.request),
-      tools: this.tools.map((tool) => tool()),
+      request: new ApiRequestClient({ mode: getMode() }),
+      tools: Object.entries(this.scenes).reduce((pre, [, value]) => {
+        pre.push(...value.tools);
+        return pre;
+      }, [] as Tool[]),
       system: this.system,
       emits,
+      key,
+      message,
+      attachments,
     });
 
-    await planningAgent.execute(content);
+    await planningAgent.run();
 
     this.cacheMessages[index] = planningAgent.getMessages();
   }
 }
 
-export { Rxai };
+export { Rxai, RegisterParams, RequestParams };

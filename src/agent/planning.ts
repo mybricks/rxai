@@ -1,12 +1,17 @@
 import { ApiRequestClient } from "../request";
-import { Tool, RxToolContext } from "../tool/base";
+// import { Tool, RxToolContext } from "../tool/base";
 import { getSystemPrompt } from "../prompt/planning";
 import { BaseAgent, BaseAgentOptions } from "./base";
+import { parseFileBlocks } from "../tool/util";
+import { getToolPrompt } from "../prompt/tool";
 
 interface PlanningAgentOptions extends BaseAgentOptions {
   emits: Emits;
   request: ApiRequestClient;
   tools: Tool[];
+  key: string;
+  message: string;
+  attachments: Attachment[];
 }
 
 /**
@@ -19,25 +24,50 @@ class PlanningAgent extends BaseAgent {
   private request: ApiRequestClient;
   private tools: Tool[];
   private emits: Emits;
+  private key: string;
+  private message: string;
+  private attachments: Attachment[];
 
   constructor(options: PlanningAgentOptions) {
     super(options);
     this.request = options.request;
     this.tools = options.tools;
     this.emits = options.emits;
+    this.key = options.key;
+    this.message = options.message;
+    this.attachments = options.attachments;
   }
 
   getMessages() {
     return this.messages;
   }
 
-  async execute(content: string | ChatMessages[number]) {
-    // 推送用户需求
-    if (typeof content === "string") {
-      this.messages.push({ role: "user", content });
-    } else {
-      this.messages.push(content);
-    }
+  async run() {
+    const content = this.attachments?.length
+      ? [
+          {
+            type: "text",
+            text: this.message,
+          },
+          ...this.attachments
+            .filter((attachement) => {
+              return attachement.type === "image";
+            })
+            .map((attachement) => {
+              return {
+                type: "image_url",
+                image_url: {
+                  url: attachement.content,
+                },
+              };
+            }),
+        ]
+      : this.message;
+
+    this.messages.push({
+      role: "user",
+      content,
+    });
 
     const hasPlanList = await this.getPlanList();
     if (hasPlanList) {
@@ -75,7 +105,7 @@ class PlanningAgent extends BaseAgent {
     const response = await this.request.requestAsStream(
       messages,
       emitsProxy,
-      this.request.getExtendParams({ messages }),
+      {},
     );
 
     if (response.type === "complete") {
@@ -98,6 +128,9 @@ class PlanningAgent extends BaseAgent {
           JSON.parse(JSON.stringify(this.planList)),
         );
         return true;
+      } else {
+        // 没有返回计划列表，结束
+        this.emits.complete(response.content);
       }
     } else {
       console.log("[PlanningAgent - 请求结果 - 失败/取消]", response);
@@ -118,54 +151,43 @@ class PlanningAgent extends BaseAgent {
 
       const isLastPlan = !this.planList.length;
 
-      const rxToolContext: RxToolContext = {
-        read() {
-          return "";
-        },
-        write() {},
-        error() {},
-      };
-
       const emitsProxy: Emits = {
         write: (chunk) => {
           this.emits.write(chunk);
-          tool.streaming({ text: chunk }, rxToolContext);
         },
-        complete: () => {
+        complete: (content) => {
           if (isLastPlan) {
             // 最后一个工具完成后，认为最终完成
-            this.emits.complete();
+            this.emits.complete(content);
           }
         },
         error: (error) => {
           this.emits.error(error);
-          tool.streamError(error, rxToolContext);
         },
         cancel: (fn) => {
           this.emits.cancel(fn);
         },
       };
 
-      tool!.streamStart();
-
       const messages = [
         {
           role: "system",
-          content: tool.systemPrompt,
+          content: getToolPrompt(tool, { attachments: this.attachments }),
         },
         ...this.messages,
       ];
       const response = await this.request.requestAsStream(
         messages,
         emitsProxy,
-        this.request.getExtendParams({ messages, tool }),
+        { aiRole: tool.aiRole },
       );
 
       if (response.type === "complete") {
-        const content = tool!.streamEnd(
-          { text: response.content },
-          rxToolContext,
-        );
+        const files = parseFileBlocks(response.content);
+        const content = tool.execute({
+          files,
+          key: this.key,
+        });
         this.messages.push({ role: "assistant", content });
       }
     }

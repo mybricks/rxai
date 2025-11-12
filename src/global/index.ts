@@ -1,4 +1,4 @@
-import { Rxai, RegisterParams, RequestParams } from "../agentnext/rxai";
+import { Rxai, RegisterParams, RequestParams } from "../agent/rxai";
 import { parseFileBlocks } from "../tool/util";
 
 const rxai = new Rxai();
