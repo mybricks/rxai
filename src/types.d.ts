@@ -13,7 +13,7 @@ interface Emits {
 interface Tool {
   name: string;
   description: string;
-  getPrompts: () => string;
+  getPrompts: (params: { attachments: Attachment[] }) => string;
   aiRole?: "image" | "architect" | "expert";
   execute: (params: {
     files: any[];

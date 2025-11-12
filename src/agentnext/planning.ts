@@ -172,7 +172,7 @@ class PlanningAgent extends BaseAgent {
       const messages = [
         {
           role: "system",
-          content: getToolPrompt(tool),
+          content: getToolPrompt(tool, { attachments: this.attachments }),
         },
         ...this.messages,
       ];
