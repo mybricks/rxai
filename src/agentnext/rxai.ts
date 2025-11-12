@@ -1,6 +1,7 @@
 import { BaseAgent } from "../agentnext/base";
 import { PlanningAgent } from "../agentnext/planning";
 import { ApiRequestClient } from "../requestnext";
+import { getMode } from "../storage/getMode";
 
 interface RegisterParams {
   name: string;
@@ -33,7 +34,7 @@ class Rxai extends BaseAgent {
     const { message, emits, key } = params;
     const index = this.cacheIndex++;
     const planningAgent = new PlanningAgent({
-      request: new ApiRequestClient(),
+      request: new ApiRequestClient({ mode: getMode() }),
       tools: Object.entries(this.scenes).reduce((pre, [, value]) => {
         pre.push(...value.tools);
         return pre;
