@@ -42,6 +42,7 @@ const requestAI = (params: RequestParams) => {
       tool.execute({
         files: parseFileBlocks(mock.result),
         key: mock.key,
+        content: mock.result,
       });
     } else {
       console.error(`Tool「${mock.toolName}」not found`);

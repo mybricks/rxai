@@ -4,9 +4,9 @@
   "description": "基于多Agents的智能任务引擎",
   "main": "dist/cjs/index.js",
   "module": "dist/esm/index.js",
+  "types": "dist/esm/index.d.ts",
   "scripts": {
     "build": "father build",
-    "prepublishOnly": "pnpm test && father doctor && pnpm build",
     "test": "jest"
   },
   "keywords": [],
