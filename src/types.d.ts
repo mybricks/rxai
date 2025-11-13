@@ -30,7 +30,7 @@ interface Tool {
   description: string;
   getPrompts: (params: { attachments?: Attachment[] }) => string;
   aiRole?: "image" | "architect" | "expert";
-  execute: (params: { files: Files; key: string }) => string;
+  execute: (params: { files: Files; key: string, content: string; }) => string;
 }
 
 /** TODO: 环境？可以去除 */

@@ -182,6 +182,7 @@ class PlanningAgent extends BaseAgent {
         const content = tool.execute({
           files,
           key: this.key,
+          content: response.content,
         });
         this.messages.push({ role: "assistant", content });
       }
