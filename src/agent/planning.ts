@@ -24,6 +24,7 @@ class PlanningAgent extends BaseAgent {
   private key: string;
   private message: string;
   private attachments?: Attachment[];
+  private historyMessages: ChatMessages;
 
   constructor(options: PlanningAgentOptions) {
     super(options);
@@ -32,7 +33,7 @@ class PlanningAgent extends BaseAgent {
     this.key = options.key;
     this.message = options.message;
     this.attachments = options.attachments;
-    this.messages.push(...options.historyMessages);
+    this.historyMessages = options.historyMessages;
   }
 
   getMessages() {
@@ -91,6 +92,7 @@ class PlanningAgent extends BaseAgent {
           tools: this.tools,
         }),
       },
+      ...this.historyMessages,
       ...this.messages,
     ];
     const response = await this.requestInstance.requestAsStream({
@@ -173,6 +175,7 @@ class PlanningAgent extends BaseAgent {
           role: "system",
           content: getToolPrompt(tool, { attachments: this.attachments }),
         },
+        ...this.historyMessages,
         ...this.messages,
       ];
       const response = await this.requestInstance.requestAsStream({
