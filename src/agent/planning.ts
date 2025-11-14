@@ -26,6 +26,9 @@ class PlanningAgent extends BaseAgent {
   private attachments?: Attachment[];
   private historyMessages: ChatMessages;
 
+  // TODO
+  loading = true;
+
   constructor(options: PlanningAgentOptions) {
     super(options);
     this.tools = options.tools;
@@ -67,14 +70,21 @@ class PlanningAgent extends BaseAgent {
       content,
     });
 
+    this.messagesCallback(this.messages);
+
     await this.getPlanList();
     await this.executePlanList();
+
+    // 结束
+    this.loading = false;
+    this.loadingCallback(this.loading);
   }
 
   private async getPlanList() {
     const emitsProxy: Emits = {
       write: (chunk) => {
         this.emits.write(chunk);
+        this.messageStreamCallBack(chunk);
       },
       complete: () => {},
       error: (error) => {
@@ -133,6 +143,7 @@ class PlanningAgent extends BaseAgent {
           content: response.content,
         });
       }
+      this.messagesCallback(this.messages);
     } else {
       console.log("[PlanningAgent - 请求结果 - 失败/取消]", response);
     }
@@ -150,11 +161,14 @@ class PlanningAgent extends BaseAgent {
         content: `调用工具（${tool.name} - ${tool.description}）`,
       });
 
+      this.messagesCallback(this.messages);
+
       const isLastPlan = !this.planList.length;
 
       const emitsProxy: Emits = {
         write: (chunk) => {
           this.emits.write(chunk);
+          this.messageStreamCallBack(chunk);
         },
         complete: (content) => {
           if (isLastPlan) {
@@ -192,9 +206,43 @@ class PlanningAgent extends BaseAgent {
           content: response.content,
         });
         this.messages.push({ role: "assistant", content });
+        this.messageStreamCallBack(this.messages);
       }
     }
   }
+
+  private loadingCallback = (loading: boolean) => {};
+
+  onLoadingCallback = (cb: any) => {
+    cb(this.loading);
+    this.loadingCallback = cb;
+  };
+
+  offLoadingCallback = () => {
+    this.loadingCallback = () => {};
+  };
+
+  private messagesCallback = (value: any) => {};
+
+  onMessagesCallback = (fn: any) => {
+    fn(this.messages);
+    this.messagesCallback = fn;
+  };
+
+  offMessagesCallback = () => {
+    this.messagesCallback = () => {};
+  };
+
+  private messageStreamCallBack = (value: any) => {};
+
+  onMessageStreamCallBack = (fn: any) => {
+    fn(this.messages);
+    this.messageStreamCallBack = fn;
+  };
+
+  offMessageStreamCallBack = () => {
+    this.messageStreamCallBack = () => {};
+  };
 }
 
 export { PlanningAgent };

@@ -19,7 +19,7 @@ interface RxaiOptions {
 }
 
 class Rxai extends BaseAgent {
-  private cacheMessages: ChatMessages[] = [];
+  private cacheMessages: PlanningAgent[] = [];
   private cacheIndex: number = 0;
 
   // 场景
@@ -50,16 +50,33 @@ class Rxai extends BaseAgent {
       key,
       message,
       historyMessages: this.cacheMessages.reduce((pre, cur) => {
-        pre.push(...cur);
+        pre.push(...cur.getMessages());
         return pre;
-      }, []),
+      }, [] as ChatMessages),
       attachments,
     });
 
-    await planningAgent.run();
+    this.cacheMessages[index] = planningAgent;
 
-    this.cacheMessages[index] = planningAgent.getMessages();
+    this.planCallback(this.cacheMessages);
+
+    await planningAgent.run();
   }
+
+  getMessages() {
+    return this.cacheMessages;
+  }
+
+  private planCallback = (value: any) => {};
+
+  onPlanCallback = (fn: any) => {
+    fn(this.cacheMessages);
+    this.planCallback = fn;
+  };
+
+  offPlanCallback = () => {
+    this.planCallback = () => {};
+  };
 }
 
 export { Rxai, RegisterParams, RequestParams };
