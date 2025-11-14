@@ -49,6 +49,10 @@ class Rxai extends BaseAgent {
       emits,
       key,
       message,
+      historyMessages: this.cacheMessages.reduce((pre, cur) => {
+        pre.push(...cur);
+        return pre;
+      }, []),
       attachments,
     });
 

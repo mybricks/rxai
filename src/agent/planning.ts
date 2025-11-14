@@ -9,6 +9,7 @@ interface PlanningAgentOptions extends BaseAgentOptions {
   key: string;
   message: string;
   attachments?: Attachment[];
+  historyMessages: ChatMessages;
 }
 
 /**
@@ -31,6 +32,7 @@ class PlanningAgent extends BaseAgent {
     this.key = options.key;
     this.message = options.message;
     this.attachments = options.attachments;
+    this.messages.push(...options.historyMessages);
   }
 
   getMessages() {
@@ -64,13 +66,7 @@ class PlanningAgent extends BaseAgent {
       content,
     });
 
-    const hasPlanList = await this.getPlanList();
-    if (hasPlanList) {
-      this.messages.push({
-        role: "assistant",
-        content: `已规划出实现需求所需的完整步骤，将按顺序执行以下工具，${JSON.stringify(this.planList)}`,
-      });
-    }
+    await this.getPlanList();
     await this.executePlanList();
   }
 
@@ -118,6 +114,10 @@ class PlanningAgent extends BaseAgent {
             pending: false,
           };
         });
+        this.messages.push({
+          role: "assistant",
+          content: `已规划出实现需求所需的完整步骤，将按顺序执行以下工具，${JSON.stringify(this.planList)}`,
+        });
         console.log(
           "[PlanningAgent - planList]",
           JSON.parse(JSON.stringify(this.planList)),
@@ -126,6 +126,10 @@ class PlanningAgent extends BaseAgent {
       } else {
         // 没有返回计划列表，结束
         this.emits.complete(response.content);
+        this.messages.push({
+          role: "assistant",
+          content: response.content,
+        });
       }
     } else {
       console.log("[PlanningAgent - 请求结果 - 失败/取消]", response);
