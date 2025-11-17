@@ -105,8 +105,8 @@ class PlanningAgent extends BaseAgent {
           tools: this.tools,
         }),
       },
-      ...this.presetMessages,
       ...this.historyMessages,
+      ...this.presetMessages,
       ...this.messages,
     ];
     const response = await this.requestInstance.requestAsStream({
@@ -193,8 +193,8 @@ class PlanningAgent extends BaseAgent {
           role: "system",
           content: getToolPrompt(tool, { attachments: this.attachments }),
         },
-        ...this.presetMessages,
         ...this.historyMessages,
+        ...this.presetMessages,
         ...this.messages,
       ];
       const response = await this.requestInstance.requestAsStream({
