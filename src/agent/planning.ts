@@ -10,6 +10,7 @@ interface PlanningAgentOptions extends BaseAgentOptions {
   message: string;
   attachments?: Attachment[];
   historyMessages: ChatMessages;
+  presetMessages: ChatMessages;
 }
 
 /**
@@ -25,6 +26,7 @@ class PlanningAgent extends BaseAgent {
   private message: string;
   private attachments?: Attachment[];
   private historyMessages: ChatMessages;
+  private presetMessages: ChatMessages;
 
   // TODO
   loading = true;
@@ -37,6 +39,7 @@ class PlanningAgent extends BaseAgent {
     this.message = options.message;
     this.attachments = options.attachments;
     this.historyMessages = options.historyMessages;
+    this.presetMessages = options.presetMessages;
   }
 
   getMessages() {
@@ -102,6 +105,7 @@ class PlanningAgent extends BaseAgent {
           tools: this.tools,
         }),
       },
+      ...this.presetMessages,
       ...this.historyMessages,
       ...this.messages,
     ];
@@ -189,6 +193,7 @@ class PlanningAgent extends BaseAgent {
           role: "system",
           content: getToolPrompt(tool, { attachments: this.attachments }),
         },
+        ...this.presetMessages,
         ...this.historyMessages,
         ...this.messages,
       ];
