@@ -106,6 +106,7 @@ class PlanningAgent extends BaseAgent {
         }),
       },
       ...this.historyMessages,
+      ...this.presetMessages,
       ...this.messages,
     ];
     const response = await this.requestInstance.requestAsStream({
