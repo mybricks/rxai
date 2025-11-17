@@ -106,7 +106,6 @@ class PlanningAgent extends BaseAgent {
         }),
       },
       ...this.historyMessages,
-      ...this.presetMessages,
       ...this.messages,
     ];
     const response = await this.requestInstance.requestAsStream({
@@ -116,20 +115,29 @@ class PlanningAgent extends BaseAgent {
     });
 
     if (response.type === "complete") {
-      const match = response.content!.match(
-        /file="planList\.json"[\s\S]*?(\[[\s\S]*?\])/,
-      );
+      // const match = response.content!.match(
+      //   /file="planList\.json"[\s\S]*?(\[[\s\S]*?\])/,
+      // );
+      const match = response.content!.match(/```bash\s*\n(.+?)\n/);
 
       if (match?.[1]) {
         // 正常返回计划列表，执行act
         // TODO: 解析失败的重试
-        this.planList = JSON.parse(match[1]).map((plan: string) => {
-          return {
-            name: plan,
-            done: false,
-            pending: false,
-          };
-        });
+        this.planList = match[1]
+          .split("&&")
+          .filter((command) => {
+            return /^node\s+\S+/.test(command.trim());
+          })
+          .map((command) => {
+            return command.trim().replace(/^node\s+/, "");
+          })
+          .map((plan: string) => {
+            return {
+              name: plan,
+              done: false,
+              pending: false,
+            };
+          });
         this.messages.push({
           role: "assistant",
           content: `已规划出实现需求所需的完整步骤，将按顺序执行以下工具，${JSON.stringify(this.planList)}`,
