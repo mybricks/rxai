@@ -43,7 +43,7 @@ class PlanningAgent extends BaseAgent {
   }
 
   getMessages() {
-    return this.messages;
+    return [...this.presetMessages, ...this.messages];
   }
 
   async run() {
