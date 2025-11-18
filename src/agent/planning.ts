@@ -43,6 +43,9 @@ class PlanningAgent extends BaseAgent {
   }
 
   getMessages() {
+    if (this.loading) {
+      return [];
+    }
     return [...this.presetMessages, ...this.messages];
   }
 

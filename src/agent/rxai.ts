@@ -13,6 +13,7 @@ interface RequestParams {
   key: string;
   attachments?: Attachment[];
   presetMessages?: ChatMessages;
+  tools: Tool[];
 }
 
 interface RxaiOptions {
@@ -26,9 +27,6 @@ class Rxai extends BaseAgent {
   // 场景
   scenes: Record<string, RegisterParams> = {};
 
-  // TODO: 临时。不允许同时发起多个请求
-  inProgress = false;
-
   constructor(options: RxaiOptions) {
     super({
       ...options,
@@ -41,17 +39,16 @@ class Rxai extends BaseAgent {
   }
 
   async requestAI(params: RequestParams) {
-    if (this.inProgress) {
-      return;
-    }
-    const { message, emits, key, attachments, presetMessages } = params;
+    const { message, emits, key, attachments, presetMessages, tools } = params;
     const index = this.cacheIndex++;
     const planningAgent = new PlanningAgent({
       requestInstance: this.requestInstance,
-      tools: Object.entries(this.scenes).reduce((pre, [, value]) => {
-        pre.push(...value.tools);
-        return pre;
-      }, [] as Tool[]),
+      tools:
+        tools ||
+        Object.entries(this.scenes).reduce((pre, [, value]) => {
+          pre.push(...value.tools);
+          return pre;
+        }, [] as Tool[]),
       system: this.system,
       emits,
       key,
@@ -68,13 +65,7 @@ class Rxai extends BaseAgent {
 
     this.planCallback(this.cacheMessages);
 
-    try {
-      this.inProgress = true;
-      await planningAgent.run();
-      this.inProgress = false;
-    } catch {
-      this.inProgress = false;
-    }
+    await planningAgent.run();
   }
 
   getMessages() {
