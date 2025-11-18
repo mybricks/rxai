@@ -26,6 +26,9 @@ class Rxai extends BaseAgent {
   // 场景
   scenes: Record<string, RegisterParams> = {};
 
+  // TODO: 临时。不允许同时发起多个请求
+  inProgress = false;
+
   constructor(options: RxaiOptions) {
     super({
       ...options,
@@ -38,6 +41,9 @@ class Rxai extends BaseAgent {
   }
 
   async requestAI(params: RequestParams) {
+    if (this.inProgress) {
+      return;
+    }
     const { message, emits, key, attachments, presetMessages } = params;
     const index = this.cacheIndex++;
     const planningAgent = new PlanningAgent({
@@ -62,7 +68,13 @@ class Rxai extends BaseAgent {
 
     this.planCallback(this.cacheMessages);
 
-    await planningAgent.run();
+    try {
+      this.inProgress = true;
+      await planningAgent.run();
+      this.inProgress = false;
+    } catch {
+      this.inProgress = false;
+    }
   }
 
   getMessages() {
