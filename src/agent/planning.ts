@@ -194,12 +194,15 @@ class PlanningAgent extends BaseAgent {
       let content = "";
 
       const stream = tool.stream
-        ? throttle((content) => {
+        ? throttle((content, status) => {
             tool.stream!({
               files: parseFileBlocks(content),
+              status,
             });
           }, 1000)
         : null;
+
+      stream?.("", "start");
 
       const emitsProxy: Emits = {
         write: (chunk) => {
@@ -207,9 +210,10 @@ class PlanningAgent extends BaseAgent {
           this.events.emit("messageStream", chunk);
 
           content += chunk;
-          stream?.(content);
+          stream?.(content, "ing");
         },
         complete: (content) => {
+          stream?.(content, "complete");
           if (isLastPlan) {
             // 最后一个工具完成后，认为最终完成
             this.emits.complete(content);
