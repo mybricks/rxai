@@ -2,6 +2,7 @@ import { getSystemPrompt } from "../prompt/planning";
 import { BaseAgent, BaseAgentOptions } from "./base";
 import { parseFileBlocks } from "../tool/util";
 import { getToolPrompt } from "../prompt/tool";
+import { throttle } from "../utils/throttle";
 
 interface PlanningAgentOptions extends BaseAgentOptions {
   emits: Emits;
@@ -144,7 +145,7 @@ class PlanningAgent extends BaseAgent {
           });
         this.messages.push({
           role: "assistant",
-          content: `已规划出实现需求所需的完整步骤，将按顺序执行以下工具，${this.planList.map(t => t.name).join("、")}`,
+          content: `已规划出实现需求所需的完整步骤，将按顺序执行以下工具，${this.planList.map((t) => t.name).join("、")}`,
         });
         console.log(
           "[PlanningAgent - planList]",
@@ -159,10 +160,7 @@ class PlanningAgent extends BaseAgent {
           content: response.content,
         });
 
-        console.log(
-          "[PlanningAgent - raw response]",
-          response.content,
-        );
+        console.log("[PlanningAgent - raw response]", response.content);
       }
       this.messagesCallback(this.messages);
     } else {
@@ -188,13 +186,21 @@ class PlanningAgent extends BaseAgent {
 
       let content = "";
 
+      const stream = tool.stream
+        ? throttle((content) => {
+            tool.stream!({
+              files: parseFileBlocks(content),
+            });
+          }, 1000)
+        : null;
+
       const emitsProxy: Emits = {
         write: (chunk) => {
           this.emits.write(chunk);
           this.messageStreamCallBack(chunk);
 
           content += chunk;
-          tool.stream?.({ files: parseFileBlocks(content) });
+          stream?.(content);
         },
         complete: (content) => {
           if (isLastPlan) {
