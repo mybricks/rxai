@@ -186,10 +186,15 @@ class PlanningAgent extends BaseAgent {
 
       const isLastPlan = !this.planList.length;
 
+      let content = "";
+
       const emitsProxy: Emits = {
         write: (chunk) => {
           this.emits.write(chunk);
           this.messageStreamCallBack(chunk);
+
+          content += chunk;
+          tool.stream?.({ files: parseFileBlocks(content) });
         },
         complete: (content) => {
           if (isLastPlan) {
