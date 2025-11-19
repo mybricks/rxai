@@ -1,6 +1,7 @@
 import { BaseAgent } from "../agent/base";
 import { PlanningAgent } from "../agent/planning";
 import { Request, RequestOptions } from "../request/request";
+import { Events } from "../utils/events";
 
 interface RegisterParams {
   name: string;
@@ -23,6 +24,10 @@ interface RxaiOptions {
 class Rxai extends BaseAgent {
   private cacheMessages: PlanningAgent[] = [];
   private cacheIndex: number = 0;
+
+  events = new Events<{
+    plan: PlanningAgent[];
+  }>();
 
   // 场景
   scenes: Record<string, RegisterParams> = {};
@@ -63,25 +68,10 @@ class Rxai extends BaseAgent {
 
     this.cacheMessages[index] = planningAgent;
 
-    this.planCallback(this.cacheMessages);
+    this.events.emit("plan", this.cacheMessages);
 
     await planningAgent.run();
   }
-
-  getMessages() {
-    return this.cacheMessages;
-  }
-
-  private planCallback = (value: any) => {};
-
-  onPlanCallback = (fn: any) => {
-    fn(this.cacheMessages);
-    this.planCallback = fn;
-  };
-
-  offPlanCallback = () => {
-    this.planCallback = () => {};
-  };
 }
 
 export { Rxai, RegisterParams, RequestParams };

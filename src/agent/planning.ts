@@ -3,6 +3,7 @@ import { BaseAgent, BaseAgentOptions } from "./base";
 import { parseFileBlocks } from "../tool/util";
 import { getToolPrompt } from "../prompt/tool";
 import { throttle } from "../utils/throttle";
+import { Events } from "../utils/events";
 
 interface PlanningAgentOptions extends BaseAgentOptions {
   emits: Emits;
@@ -28,6 +29,12 @@ class PlanningAgent extends BaseAgent {
   private attachments?: Attachment[];
   private historyMessages: ChatMessages;
   private presetMessages: ChatMessages;
+
+  events = new Events<{
+    loading: boolean;
+    messages: ChatMessages;
+    messageStream: string;
+  }>();
 
   // TODO
   loading = true;
@@ -77,21 +84,21 @@ class PlanningAgent extends BaseAgent {
       content,
     });
 
-    this.messagesCallback(this.messages);
+    this.events.emit("messages", this.messages);
 
     await this.getPlanList();
     await this.executePlanList();
 
     // 结束
     this.loading = false;
-    this.loadingCallback(this.loading);
+    this.events.emit("loading", this.loading);
   }
 
   private async getPlanList() {
     const emitsProxy: Emits = {
       write: (chunk) => {
         this.emits.write(chunk);
-        this.messageStreamCallBack(chunk);
+        this.events.emit("messageStream", chunk);
       },
       complete: () => {},
       error: (error) => {
@@ -162,7 +169,7 @@ class PlanningAgent extends BaseAgent {
 
         console.log("[PlanningAgent - raw response]", response.content);
       }
-      this.messagesCallback(this.messages);
+      this.events.emit("messages", this.messages);
     } else {
       console.log("[PlanningAgent - 请求结果 - 失败/取消]", response);
     }
@@ -180,7 +187,7 @@ class PlanningAgent extends BaseAgent {
         content: `调用工具（${tool.name} - ${tool.description}）`,
       });
 
-      this.messagesCallback(this.messages);
+      this.events.emit("messages", this.messages);
 
       const isLastPlan = !this.planList.length;
 
@@ -197,7 +204,7 @@ class PlanningAgent extends BaseAgent {
       const emitsProxy: Emits = {
         write: (chunk) => {
           this.emits.write(chunk);
-          this.messageStreamCallBack(chunk);
+          this.events.emit("messageStream", chunk);
 
           content += chunk;
           stream?.(content);
@@ -239,43 +246,10 @@ class PlanningAgent extends BaseAgent {
           content: response.content,
         });
         this.messages.push({ role: "assistant", content });
-        this.messageStreamCallBack(this.messages);
+        this.events.emit("messages", this.messages);
       }
     }
   }
-
-  private loadingCallback = (loading: boolean) => {};
-
-  onLoadingCallback = (cb: any) => {
-    cb(this.loading);
-    this.loadingCallback = cb;
-  };
-
-  offLoadingCallback = () => {
-    this.loadingCallback = () => {};
-  };
-
-  private messagesCallback = (value: any) => {};
-
-  onMessagesCallback = (fn: any) => {
-    fn(this.messages);
-    this.messagesCallback = fn;
-  };
-
-  offMessagesCallback = () => {
-    this.messagesCallback = () => {};
-  };
-
-  private messageStreamCallBack = (value: any) => {};
-
-  onMessageStreamCallBack = (fn: any) => {
-    fn(this.messages);
-    this.messageStreamCallBack = fn;
-  };
-
-  offMessageStreamCallBack = () => {
-    this.messageStreamCallBack = () => {};
-  };
 }
 
 export { PlanningAgent };
