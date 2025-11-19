@@ -11,52 +11,43 @@ class Events<TMap extends object> {
     }
   >();
 
-  on<K extends keyof TMap>(key: K, handle: Handle<TMap[K]>) {
+  /** 获取event，不存在默认创建 */
+  getEvent<K extends keyof TMap>(key: K) {
     let event = this.events.get(key);
     if (!event) {
       this.events.set(
         key,
-        (event = {
-          cache: EMPTY_CACHE,
-          handles: new Set(),
-        }),
+        (event = { cache: EMPTY_CACHE, handles: new Set() }),
       );
     }
-    event.handles.add(handle as Handle<TMap[keyof TMap]>);
+    return event;
   }
 
-  onWithCache<K extends keyof TMap>(key: K, handle: Handle<TMap[K]>) {
-    let event = this.events.get(key);
-    if (!event) {
-      this.events.set(
-        key,
-        (event = {
-          cache: EMPTY_CACHE,
-          handles: new Set(),
-        }),
-      );
-    }
-    if (event.cache !== EMPTY_CACHE) {
+  /** 注册 */
+  on<K extends keyof TMap>(
+    key: K,
+    handle: Handle<TMap[K]>,
+    immediate: boolean = false,
+  ) {
+    const event = this.getEvent(key);
+    if (immediate && event.cache !== EMPTY_CACHE) {
       handle(event.cache as TMap[K]);
     }
     event.handles.add(handle as Handle<TMap[keyof TMap]>);
+
+    return () => {
+      this.off(key, handle);
+    };
   }
 
   off<K extends keyof TMap>(key: K, handle: Handle<TMap[K]>) {
-    const event = this.events.get(key);
-    if (event) {
-      event.handles.delete(handle as Handle<TMap[keyof TMap]>);
-    }
+    this.getEvent(key).handles.delete(handle as Handle<TMap[keyof TMap]>);
   }
 
   emit<K extends keyof TMap>(key: K, value: TMap[K]) {
-    const event = this.events.get(key);
-    if (event) {
-      event.cache = value;
-      event.handles.forEach((handle) => {
-        handle(value);
-      });
-    }
+    const event = this.getEvent(key);
+    event.cache = value;
+    event.handles.forEach((handle) => handle(value));
   }
 }
 

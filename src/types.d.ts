@@ -31,7 +31,10 @@ interface Tool {
   getPrompts: (params: { attachments?: Attachment[] }) => string;
   aiRole?: "image" | "architect" | "expert";
   execute: (params: { files: Files; key: string; content: string }) => string;
-  stream?: (params: { files: Files }) => void;
+  stream?: (params: {
+    files: Files;
+    status: "start" | "ing" | "complete";
+  }) => void;
 }
 
 /** TODO: 环境？可以去除 */
