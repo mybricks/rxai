@@ -28,9 +28,10 @@ type Files = Record<string, File | File[]>;
 interface Tool {
   name: string;
   description: string;
-  getPrompts: (params: { attachments?: Attachment[] }) => string;
+  displayName: string;
+  getPrompts?: (params: { attachments?: Attachment[] }) => string;
   aiRole?: "image" | "architect" | "expert";
-  execute: (params: { files: Files; key: string; content: string }) => string;
+  execute: (params?: { files: Files; key: string; content: string }) => string;
   stream?: (params: {
     files: Files;
     status: "start" | "ing" | "complete";

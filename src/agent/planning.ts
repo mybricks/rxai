@@ -132,7 +132,6 @@ class PlanningAgent extends BaseAgent {
     const response = await this.requestInstance.requestAsStream({
       messages,
       emits: emitsProxy,
-      aiRole: "architect",
     });
 
     if (response.type === "complete") {
@@ -209,6 +208,26 @@ class PlanningAgent extends BaseAgent {
       this.events.emit("userFriendlyMessages", this.userFriendlyMessages);
 
       const isLastPlan = !this.planList.length;
+
+      const toolPrompt = getToolPrompt(tool, { attachments: this.attachments });
+
+      if (!toolPrompt) {
+        const content = await tool.execute();
+        this.messages.push({ role: "assistant", content });
+
+        this.userFriendlyMessages[this.userFriendlyMessages.length - 1].status =
+          "success";
+
+        if (isLastPlan) {
+          this.userFriendlyMessages.push({
+            role: "assistant",
+            content,
+          });
+        }
+
+        this.events.emit("userFriendlyMessages", this.userFriendlyMessages);
+        continue;
+      }
 
       let content = "";
 
