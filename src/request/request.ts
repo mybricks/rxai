@@ -26,14 +26,14 @@ class Request {
       let content = "";
       const emitsProxy: Emits = {
         write(chunk) {
-          emits.write(chunk);
+          emits.write(chunk.replace(/^M:/, ""));
           content += chunk;
         },
         complete() {
-          emits.complete(content);
+          emits.complete(content.replace(/^M:/, ""));
           resolve({
             type: "complete",
-            content,
+            content: content.replace(/^M:/, ""),
           });
         },
         error(ex) {

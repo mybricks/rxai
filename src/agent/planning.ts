@@ -26,13 +26,18 @@ class PlanningAgent extends BaseAgent {
   private emits: Emits;
   private key: string;
   private message: string;
+  /** 附件 */
   private attachments?: Attachment[];
+  /** 历史记录 */
   private historyMessages: ChatMessages;
+  /** 预设消息，调用方提前注入 */
   private presetMessages: ChatMessages;
+  /** 用户友好消息列表 */
+  private userFriendlyMessages: any[] = [];
 
   events = new Events<{
     loading: boolean;
-    messages: ChatMessages;
+    userFriendlyMessages: any[];
     messageStream: string;
   }>();
 
@@ -84,14 +89,18 @@ class PlanningAgent extends BaseAgent {
       content,
     });
 
-    this.events.emit("messages", this.messages);
+    this.userFriendlyMessages.push({
+      role: "user",
+      content,
+    });
+
+    this.events.emit("userFriendlyMessages", this.userFriendlyMessages);
 
     await this.getPlanList();
-    await this.executePlanList();
-
     // 结束
     this.loading = false;
     this.events.emit("loading", this.loading);
+    await this.executePlanList();
   }
 
   private async getPlanList() {
@@ -127,6 +136,10 @@ class PlanningAgent extends BaseAgent {
     });
 
     if (response.type === "complete") {
+      this.userFriendlyMessages.push({
+        role: "assistant",
+        content: response.content,
+      });
       // const match = response.content!.match(
       //   /file="planList\.json"[\s\S]*?(\[[\s\S]*?\])/,
       // );
@@ -169,7 +182,7 @@ class PlanningAgent extends BaseAgent {
 
         console.log("[PlanningAgent - raw response]", response.content);
       }
-      this.events.emit("messages", this.messages);
+      this.events.emit("userFriendlyMessages", this.userFriendlyMessages);
     } else {
       console.log("[PlanningAgent - 请求结果 - 失败/取消]", response);
     }
@@ -187,7 +200,13 @@ class PlanningAgent extends BaseAgent {
         content: `调用工具（${tool.name} - ${tool.description}）`,
       });
 
-      this.events.emit("messages", this.messages);
+      this.userFriendlyMessages.push({
+        role: "tool",
+        status: "pending",
+        content: tool,
+      });
+
+      this.events.emit("userFriendlyMessages", this.userFriendlyMessages);
 
       const isLastPlan = !this.planList.length;
 
@@ -207,7 +226,7 @@ class PlanningAgent extends BaseAgent {
       const emitsProxy: Emits = {
         write: (chunk) => {
           this.emits.write(chunk);
-          this.events.emit("messageStream", chunk);
+          // this.events.emit("messageStream", chunk);
 
           content += chunk;
           stream?.(content, "ing");
@@ -250,7 +269,20 @@ class PlanningAgent extends BaseAgent {
           content: response.content,
         });
         this.messages.push({ role: "assistant", content });
-        this.events.emit("messages", this.messages);
+
+        this.userFriendlyMessages[this.userFriendlyMessages.length - 1].status =
+          "success";
+
+        if (isLastPlan) {
+          this.userFriendlyMessages.push({
+            role: "assistant",
+            content,
+          });
+        }
+
+        this.events.emit("userFriendlyMessages", this.userFriendlyMessages);
+      } else {
+        console.error("[rxai - 工具未正常调用]", response);
       }
     }
   }
