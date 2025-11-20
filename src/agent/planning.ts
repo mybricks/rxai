@@ -13,6 +13,7 @@ interface PlanningAgentOptions extends BaseAgentOptions {
   attachments?: Attachment[];
   historyMessages: ChatMessages;
   presetMessages: ChatMessages;
+  planList?: string[];
 }
 
 /**
@@ -53,6 +54,14 @@ class PlanningAgent extends BaseAgent {
     this.attachments = options.attachments;
     this.historyMessages = options.historyMessages;
     this.presetMessages = options.presetMessages;
+    this.planList =
+      options.planList?.map((plan) => {
+        return {
+          name: plan,
+          done: false,
+          pending: false,
+        };
+      }) || [];
   }
 
   getMessages() {
@@ -96,7 +105,10 @@ class PlanningAgent extends BaseAgent {
 
     this.events.emit("userFriendlyMessages", this.userFriendlyMessages);
 
-    await this.getPlanList();
+    if (!this.planList.length) {
+      await this.getPlanList();
+    }
+
     // 结束
     this.loading = false;
     this.events.emit("loading", this.loading);

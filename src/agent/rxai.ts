@@ -15,6 +15,7 @@ interface RequestParams {
   attachments?: Attachment[];
   presetMessages?: ChatMessages;
   tools: Tool[];
+  planList?: string[];
 }
 
 interface RxaiOptions {
@@ -44,7 +45,15 @@ class Rxai extends BaseAgent {
   }
 
   async requestAI(params: RequestParams) {
-    const { message, emits, key, attachments, presetMessages, tools } = params;
+    const {
+      message,
+      emits,
+      key,
+      attachments,
+      presetMessages,
+      tools,
+      planList,
+    } = params;
     const index = this.cacheIndex++;
     const planningAgent = new PlanningAgent({
       requestInstance: this.requestInstance,
@@ -64,6 +73,7 @@ class Rxai extends BaseAgent {
       }, [] as ChatMessages),
       attachments,
       presetMessages: presetMessages || [],
+      planList,
     });
 
     this.cacheMessages[index] = planningAgent;
