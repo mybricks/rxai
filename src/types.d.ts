@@ -36,6 +36,7 @@ interface Tool {
     files: Files;
     status: "start" | "ing" | "complete";
   }) => void;
+  streamThoughts?: boolean;
 }
 
 /** TODO: 环境？可以去除 */

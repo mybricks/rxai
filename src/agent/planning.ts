@@ -235,7 +235,7 @@ class PlanningAgent extends BaseAgent {
         this.userFriendlyMessages[this.userFriendlyMessages.length - 1].status =
           "success";
 
-        if (isLastPlan) {
+        if (isLastPlan || tool.streamThoughts) {
           this.userFriendlyMessages.push({
             role: "assistant",
             content,
@@ -262,6 +262,9 @@ class PlanningAgent extends BaseAgent {
       const emitsProxy: Emits = {
         write: (chunk) => {
           this.emits.write(chunk);
+          if (tool.streamThoughts) {
+            this.events.emit("messageStream", chunk);
+          }
           // this.events.emit("messageStream", chunk);
 
           content += chunk;
