@@ -123,7 +123,7 @@ class PlanningAgent extends BaseAgent {
     const response = await this.requestInstance.requestAsStream({
       messages,
       emits: emitsProxy,
-      aiRole: "plan",
+      aiRole: "architect",
     });
 
     if (response.type === "complete") {
