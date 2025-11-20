@@ -107,6 +107,11 @@ class PlanningAgent extends BaseAgent {
 
     if (!this.planList.length) {
       await this.getPlanList();
+    } else {
+      this.messages.push({
+        role: "assistant",
+        content: `已规划出实现需求所需的完整步骤，将按顺序执行以下工具，${this.planList.map((t) => t.name).join("、")}`,
+      });
     }
 
     // 结束
