@@ -272,10 +272,6 @@ class PlanningAgent extends BaseAgent {
         },
         complete: (content) => {
           stream?.(content, "complete");
-          if (isLastPlan) {
-            // 最后一个工具完成后，认为最终完成
-            this.emits.complete(content);
-          }
         },
         error: (error) => {
           this.emits.error(error);
@@ -317,6 +313,8 @@ class PlanningAgent extends BaseAgent {
             role: "assistant",
             content,
           });
+          // 最后一个工具完成后，认为最终完成
+          this.emits.complete(content);
         }
 
         this.events.emit("userFriendlyMessages", this.userFriendlyMessages);
