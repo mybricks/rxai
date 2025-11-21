@@ -246,6 +246,46 @@ class PlanningAgent extends BaseAgent {
           });
         }
 
+        if (isLastPlan) {
+          if (tool.lastAppendMessage) {
+            const emitsProxy: Emits = {
+              write: (chunk) => {
+                this.events.emit("messageStream", chunk);
+              },
+              complete: (content) => {},
+              error: (error) => {},
+              cancel: (fn) => {},
+            };
+            const messages = [
+              {
+                role: "system",
+                content: getToolPrompt(tool, { attachments: this.attachments }),
+              },
+              ...this.historyMessages,
+              ...this.presetMessages,
+              ...this.messages,
+              {
+                role: "user",
+                content: tool.lastAppendMessage,
+              },
+            ];
+            const response = await this.requestInstance.requestAsStream({
+              messages,
+              emits: emitsProxy,
+              aiRole: tool.aiRole,
+            });
+            if (response.type === "complete") {
+              this.userFriendlyMessages.push({
+                role: "assistant",
+                content: response.content,
+              });
+            }
+          }
+
+          // 最后一个工具完成后，认为最终完成
+          this.emits.complete(content);
+        }
+
         this.events.emit("userFriendlyMessages", this.userFriendlyMessages);
         continue;
       }
