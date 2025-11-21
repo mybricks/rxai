@@ -7,7 +7,7 @@ const fileFormat = (params: FileFormatParams) => {
   const { fileName, content } = params;
   const suffix = fileName.split(".").pop();
   return `
-  \`\`\`${suffix} file="${fileName}"
+  \`\`\`${suffix} title="${fileName}"
   ${content}
   \`\`\`
   `;

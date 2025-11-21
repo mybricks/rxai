@@ -10,7 +10,7 @@ export function parseFileBlocks(content: string) {
   while (currentIndex < content.length) {
     // 查找代码块开始标记
     // const startPattern = /```(\w+)\s+type="([^"]+)"\s+file="([^"]+)"\s*\n/g;
-    const startPattern = /```(\w+)\s+file="([^"]+)"\s*\n/g;
+    const startPattern = /```(\w+)\s+(?:file|title)="([^"]+)"\s*\n/g;
     startPattern.lastIndex = currentIndex;
 
     const startMatch = startPattern.exec(content);
