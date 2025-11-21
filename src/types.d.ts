@@ -37,6 +37,8 @@ interface Tool {
     status: "start" | "ing" | "complete";
   }) => void;
   streamThoughts?: boolean;
+  /** TODO: 当配置该字段，且是最后一个工具时，再发起一次请求 */
+  lastAppendMessage?: string;
 }
 
 /** TODO: 环境？可以去除 */
