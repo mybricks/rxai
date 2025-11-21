@@ -152,10 +152,10 @@ class PlanningAgent extends BaseAgent {
     });
 
     if (response.type === "complete") {
-      this.userFriendlyMessages.push({
-        role: "assistant",
-        content: response.content,
-      });
+      // this.userFriendlyMessages.push({
+      //   role: "assistant",
+      //   content: response.content,
+      // });
       // const match = response.content!.match(
       //   /file="planList\.json"[\s\S]*?(\[[\s\S]*?\])/,
       // );
@@ -192,6 +192,10 @@ class PlanningAgent extends BaseAgent {
         // 没有返回计划列表，结束
         this.emits.complete(response.content);
         this.messages.push({
+          role: "assistant",
+          content: response.content,
+        });
+        this.userFriendlyMessages.push({
           role: "assistant",
           content: response.content,
         });
@@ -309,10 +313,48 @@ class PlanningAgent extends BaseAgent {
           "success";
 
         if (isLastPlan) {
-          this.userFriendlyMessages.push({
-            role: "assistant",
-            content,
-          });
+          if (!tool.lastAppendMessage) {
+            this.userFriendlyMessages.push({
+              role: "assistant",
+              content,
+            });
+          }
+
+          if (tool.lastAppendMessage) {
+            const emitsProxy: Emits = {
+              write: (chunk) => {
+                this.events.emit("messageStream", chunk);
+              },
+              complete: (content) => {},
+              error: (error) => {},
+              cancel: (fn) => {},
+            };
+            const messages = [
+              {
+                role: "system",
+                content: getToolPrompt(tool, { attachments: this.attachments }),
+              },
+              ...this.historyMessages,
+              ...this.presetMessages,
+              ...this.messages,
+              {
+                role: "user",
+                content: tool.lastAppendMessage,
+              },
+            ];
+            const response = await this.requestInstance.requestAsStream({
+              messages,
+              emits: emitsProxy,
+              aiRole: tool.aiRole,
+            });
+            if (response.type === "complete") {
+              this.userFriendlyMessages.push({
+                role: "assistant",
+                content: response.content,
+              });
+            }
+          }
+
           // 最后一个工具完成后，认为最终完成
           this.emits.complete(content);
         }
