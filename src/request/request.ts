@@ -59,6 +59,14 @@ class Request {
         emits: emitsProxy,
         aiRole,
       });
+
+      // import("./preset/cdzd").then((module) => {
+      //   module.requestAsStream({
+      //     messages,
+      //     emits: emitsProxy,
+      //     aiRole,
+      //   });
+      // });
     });
   }
 }
