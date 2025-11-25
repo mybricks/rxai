@@ -16,10 +16,12 @@ interface RequestParams {
   presetMessages?: ChatMessages;
   tools: Tool[];
   planList?: string[];
+  enableLog?: boolean;
 }
 
 interface RxaiOptions {
   request: RequestOptions;
+  enableLog?: boolean;
 }
 
 class Rxai extends BaseAgent {
@@ -53,6 +55,7 @@ class Rxai extends BaseAgent {
       presetMessages,
       tools,
       planList,
+      enableLog,
     } = params;
     const index = this.cacheIndex++;
     const planningAgent = new PlanningAgent({
@@ -74,6 +77,7 @@ class Rxai extends BaseAgent {
       attachments,
       presetMessages: presetMessages || [],
       planList,
+      enableLog: typeof enableLog === "boolean" ? enableLog : this.enableLog,
     });
 
     this.cacheMessages[index] = planningAgent;

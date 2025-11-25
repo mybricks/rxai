@@ -2,6 +2,7 @@ interface RequestAsStreamParams {
   messages: ChatMessages;
   aiRole?: AiRole;
   emits: Emits;
+  enableLog?: boolean;
 }
 
 interface RequestOptions {
@@ -22,7 +23,7 @@ class Request {
     | { type: "cancel"; content: string }
   > {
     return new Promise((resolve) => {
-      const { messages, emits, aiRole } = params;
+      const { messages, emits, aiRole, enableLog } = params;
       let content = "";
       const emitsProxy: Emits = {
         write(chunk) {
@@ -30,6 +31,9 @@ class Request {
           content += chunk;
         },
         complete() {
+          if (enableLog) {
+            console.log("[Request - requestAsStream - complete]", content);
+          }
           emits.complete(content.replace(/^M:/, ""));
           resolve({
             type: "complete",
@@ -37,6 +41,9 @@ class Request {
           });
         },
         error(ex) {
+          if (enableLog) {
+            console.log("[Request - requestAsStream - error]", ex);
+          }
           emits.error(ex);
           resolve({
             type: "error",

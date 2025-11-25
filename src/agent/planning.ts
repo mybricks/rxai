@@ -470,7 +470,10 @@ class PlanningAgent extends BaseAgent {
 
   private async request(params: Parameters<Request["requestAsStream"]>[0]) {
     try {
-      const response = await this.requestInstance.requestAsStream(params);
+      const response = await this.requestInstance.requestAsStream({
+        ...params,
+        enableLog: this.enableLog,
+      });
       if (response.type === "error") {
         this.pushUserFriendlyMessages({
           role: "error",
