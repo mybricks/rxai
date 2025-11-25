@@ -191,6 +191,10 @@ class PlanningAgent extends BaseAgent {
             role: "error",
             content,
           });
+          this.messages.push({
+            role: "assistant",
+            content,
+          });
           return;
         }
 
@@ -512,6 +516,10 @@ class PlanningAgent extends BaseAgent {
       console.error(content);
       this.pushUserFriendlyMessages({
         role: "error",
+        content,
+      });
+      this.messages.push({
+        role: "assistant",
         content,
       });
       return new Error("Tool Execute Error");
