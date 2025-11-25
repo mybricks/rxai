@@ -1,6 +1,6 @@
 {
   "name": "@mybricks/rxai",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "基于多Agents的智能任务引擎",
   "main": "dist/cjs/index.js",
   "module": "dist/esm/index.js",
