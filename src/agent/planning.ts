@@ -4,6 +4,7 @@ import { parseFileBlocks } from "../tool/util";
 import { getToolPrompt } from "../prompt/tool";
 import { throttle } from "../utils/throttle";
 import { Events } from "../utils/events";
+import { Request } from "../request/request";
 
 interface PlanningAgentOptions extends BaseAgentOptions {
   emits: Emits;
@@ -45,6 +46,9 @@ class PlanningAgent extends BaseAgent {
   // TODO
   loading = true;
 
+  /** 状态 */
+  status: "pending" | "success" | "error" | "aborted" = "pending";
+
   constructor(options: PlanningAgentOptions) {
     super(options);
     this.tools = options.tools;
@@ -72,6 +76,7 @@ class PlanningAgent extends BaseAgent {
   }
 
   async run() {
+    // 拼user消息
     const content = this.attachments?.length
       ? [
           {
@@ -93,47 +98,37 @@ class PlanningAgent extends BaseAgent {
         ]
       : this.message;
 
+    // 推送消息
     this.messages.push({
       role: "user",
       content,
     });
 
-    this.userFriendlyMessages.push({
+    // 推送用户友好消息
+    this.pushUserFriendlyMessages({
       role: "user",
       content,
     });
 
-    this.events.emit("userFriendlyMessages", this.userFriendlyMessages);
-
     if (!this.planList.length) {
+      // 没有规划，获取规划
       await this.getPlanList();
     } else {
+      // 外部定义的规划流程
       this.messages.push({
         role: "assistant",
         content: `已规划出实现需求所需的完整步骤，将按顺序执行以下工具，${this.planList.map((t) => t.name).join("、")}`,
       });
     }
 
-    // 结束
+    // 规划结束即结束loading，后续状态由工具决定
     this.loading = false;
     this.events.emit("loading", this.loading);
+    // 执行工具
     await this.executePlanList();
   }
 
   private async getPlanList() {
-    const emitsProxy: Emits = {
-      write: (chunk) => {
-        this.emits.write(chunk);
-        this.events.emit("messageStream", chunk);
-      },
-      complete: () => {},
-      error: (error) => {
-        this.emits.error(error);
-      },
-      cancel: (fn) => {
-        this.emits.cancel(fn);
-      },
-    };
     const messages = [
       {
         role: "system",
@@ -146,70 +141,90 @@ class PlanningAgent extends BaseAgent {
       ...this.presetMessages,
       ...this.messages,
     ];
-    const response = await this.requestInstance.requestAsStream({
+
+    const response = await this.request({
       messages,
-      emits: emitsProxy,
+      emits: this.getEmits({}),
     });
 
-    if (response.type === "complete") {
-      // this.userFriendlyMessages.push({
-      //   role: "assistant",
-      //   content: response.content,
-      // });
-      // const match = response.content!.match(
-      //   /file="planList\.json"[\s\S]*?(\[[\s\S]*?\])/,
-      // );
-      const match = response.content!.match(/```bash\s*\n(.+?)\n/);
+    if (response) {
+      // 解析规划内容
+      const match = response!.match(/```bash\s*\n(.+?)\n/);
 
       if (match?.[1]) {
         // 正常返回计划列表，执行act
         // TODO: 解析失败的重试
-        this.planList = match[1]
+
+        const planList = match[1]
           .split("&&")
           .filter((command) => {
             return /^node\s+\S+/.test(command.trim());
           })
           .map((command) => {
             return command.trim().replace(/^node\s+/, "");
-          })
-          .map((plan: string) => {
-            return {
-              name: plan,
-              done: false,
-              pending: false,
-            };
           });
+
+        // 工具检查
+        let errorTools = "";
+
+        const checkPlanList = planList.filter((plan) => {
+          const tool = this.tools.find((tool) => {
+            return tool.name === plan;
+          });
+          if (!tool) {
+            if (!errorTools) {
+              errorTools = plan;
+            } else {
+              errorTools += `, ${plan}`;
+            }
+            return false;
+          }
+
+          return true;
+        });
+
+        if (checkPlanList.length !== planList.length) {
+          this.status = "error";
+          const content = `规划错误，使用了不存在的工具(${errorTools})`;
+          console.error(content);
+          this.pushUserFriendlyMessages({
+            role: "error",
+            content,
+          });
+          return;
+        }
+
+        this.planList = planList.map((plan: string) => {
+          return {
+            name: plan,
+            done: false,
+            pending: false,
+          };
+        });
         this.messages.push({
           role: "assistant",
           content: `已规划出实现需求所需的完整步骤，将按顺序执行以下工具，${this.planList.map((t) => t.name).join("、")}`,
         });
-        console.log(
-          "[PlanningAgent - planList]",
-          JSON.parse(JSON.stringify(this.planList)),
-        );
         return true;
       } else {
         // 没有返回计划列表，结束
-        this.emits.complete(response.content);
+        this.emits.complete(response);
         this.messages.push({
           role: "assistant",
-          content: response.content,
-        });
-        this.userFriendlyMessages.push({
-          role: "assistant",
-          content: response.content,
+          content: response,
         });
 
-        console.log("[PlanningAgent - raw response]", response.content);
+        this.pushUserFriendlyMessages({
+          role: "assistant",
+          content: response,
+        });
       }
-      this.events.emit("userFriendlyMessages", this.userFriendlyMessages);
-    } else {
-      console.log("[PlanningAgent - 请求结果 - 失败/取消]", response);
     }
   }
 
   private async executePlanList() {
-    while (this.planList.length) {
+    // 规划执行结束或状态非pending，都停止循环
+    while (this.planList.length && this.status === "pending") {
       const plan = this.planList.shift();
       const tool = this.tools.find((tool) => {
         return tool.name === plan!.name;
@@ -220,42 +235,41 @@ class PlanningAgent extends BaseAgent {
         content: `调用工具（${tool.name} - ${tool.description}）`,
       });
 
-      this.userFriendlyMessages.push({
+      this.pushUserFriendlyMessages({
         role: "tool",
         status: "pending",
         content: tool,
       });
 
-      this.events.emit("userFriendlyMessages", this.userFriendlyMessages);
-
+      /** 是否最后一项 */
       const isLastPlan = !this.planList.length;
-
+      /** 工具提示词 */
       const toolPrompt = getToolPrompt(tool, { attachments: this.attachments });
 
       if (!toolPrompt) {
-        const content = await tool.execute();
+        // 没有提示词，走本地调用，执行execute
+        const content = await this.toolExecute(tool);
+        if (content instanceof Error) {
+          continue;
+        }
+
         this.messages.push({ role: "assistant", content });
 
         this.userFriendlyMessages[this.userFriendlyMessages.length - 1].status =
           "success";
 
         if (isLastPlan || tool.streamThoughts) {
-          this.userFriendlyMessages.push({
+          // 最后一项或者需要展示结果
+          this.pushUserFriendlyMessages({
             role: "assistant",
             content,
           });
         }
 
         if (isLastPlan) {
+          // 最后一项
           if (tool.lastAppendMessage) {
-            const emitsProxy: Emits = {
-              write: (chunk) => {
-                this.events.emit("messageStream", chunk);
-              },
-              complete: (content) => {},
-              error: (error) => {},
-              cancel: (fn) => {},
-            };
+            // 工具执行完成后需要默认再调用一次请求
             const messages = [
               {
                 role: "system",
@@ -269,15 +283,25 @@ class PlanningAgent extends BaseAgent {
                 content: tool.lastAppendMessage,
               },
             ];
-            const response = await this.requestInstance.requestAsStream({
+
+            const response = await this.request({
               messages,
-              emits: emitsProxy,
+              emits: this.getEmits({
+                write: (chunk) => {
+                  this.events.emit("messageStream", chunk);
+                },
+              }),
               aiRole: tool.aiRole,
             });
-            if (response.type === "complete") {
-              this.userFriendlyMessages.push({
+
+            if (!response) {
+              continue;
+            }
+
+            if (response) {
+              this.pushUserFriendlyMessages({
                 role: "assistant",
-                content: response.content,
+                content: response,
               });
             }
           }
@@ -285,8 +309,6 @@ class PlanningAgent extends BaseAgent {
           // 最后一个工具完成后，认为最终完成
           this.emits.complete(content);
         }
-
-        this.events.emit("userFriendlyMessages", this.userFriendlyMessages);
         continue;
       }
 
@@ -303,28 +325,6 @@ class PlanningAgent extends BaseAgent {
 
       stream?.("", "start");
 
-      const emitsProxy: Emits = {
-        write: (chunk) => {
-          this.emits.write(chunk);
-          if (tool.streamThoughts) {
-            this.events.emit("messageStream", chunk);
-          }
-          // this.events.emit("messageStream", chunk);
-
-          content += chunk;
-          stream?.(content, "ing");
-        },
-        complete: (content) => {
-          stream?.(content, "complete");
-        },
-        error: (error) => {
-          this.emits.error(error);
-        },
-        cancel: (fn) => {
-          this.emits.cancel(fn);
-        },
-      };
-
       const messages = [
         {
           role: "system",
@@ -334,41 +334,60 @@ class PlanningAgent extends BaseAgent {
         ...this.presetMessages,
         ...this.messages,
       ];
-      const response = await this.requestInstance.requestAsStream({
+
+      const response = await this.request({
         messages,
-        emits: emitsProxy,
+        emits: this.getEmits({
+          write: (chunk) => {
+            if (tool.streamThoughts) {
+              this.events.emit("messageStream", chunk);
+            }
+
+            content += chunk;
+            stream?.(content, "ing");
+          },
+          complete: (content) => {
+            stream?.(content, "complete");
+          },
+        }),
         aiRole: tool.aiRole,
       });
 
-      if (response.type === "complete") {
-        const files = parseFileBlocks(response.content);
-        const content = tool.execute({
+      if (!response) {
+        continue;
+      }
+
+      if (response) {
+        // 解析文件
+        const files = parseFileBlocks(response);
+
+        // 执行工具
+        const content = await this.toolExecute(tool, {
           files,
           key: this.key,
-          content: response.content,
+          content: response,
         });
-        this.messages.push({ role: "assistant", content });
 
+        if (content instanceof Error) {
+          continue;
+        }
+
+        this.messages.push({ role: "assistant", content });
         this.userFriendlyMessages[this.userFriendlyMessages.length - 1].status =
           "success";
 
         if (isLastPlan) {
+          // 最后一步
           if (!tool.lastAppendMessage) {
-            this.userFriendlyMessages.push({
+            // 不需要再次请求
+            this.pushUserFriendlyMessages({
               role: "assistant",
               content,
             });
           }
 
           if (tool.lastAppendMessage) {
-            const emitsProxy: Emits = {
-              write: (chunk) => {
-                this.events.emit("messageStream", chunk);
-              },
-              complete: (content) => {},
-              error: (error) => {},
-              cancel: (fn) => {},
-            };
+            // 需要再次发起请求
             const messages = [
               {
                 role: "system",
@@ -382,27 +401,117 @@ class PlanningAgent extends BaseAgent {
                 content: tool.lastAppendMessage,
               },
             ];
-            const response = await this.requestInstance.requestAsStream({
+            const response = await this.request({
               messages,
-              emits: emitsProxy,
               aiRole: tool.aiRole,
+              emits: this.getEmits({
+                write: (chunk) => {
+                  this.events.emit("messageStream", chunk);
+                },
+              }),
             });
-            if (response.type === "complete") {
-              this.userFriendlyMessages.push({
+
+            if (!response) {
+              continue;
+            }
+
+            if (response) {
+              this.pushUserFriendlyMessages({
                 role: "assistant",
-                content: response.content,
+                content: response,
               });
             }
           }
 
           // 最后一个工具完成后，认为最终完成
           this.emits.complete(content);
+        } else {
+          this.pushUserFriendlyMessages();
         }
-
-        this.events.emit("userFriendlyMessages", this.userFriendlyMessages);
-      } else {
-        console.error("[rxai - 工具未正常调用]", response);
       }
+    }
+  }
+
+  /** 用户友好消息推送 */
+  private pushUserFriendlyMessages(
+    message?: ChatMessages[number] & {
+      status?: "pending" | "success" | "error" | "aborted";
+    },
+  ) {
+    if (message) {
+      this.userFriendlyMessages.push(message);
+    }
+
+    this.events.emit("userFriendlyMessages", this.userFriendlyMessages);
+  }
+
+  /** emits代理 */
+  private getEmits(emits: Partial<Emits>): Emits {
+    return {
+      write: (chunk) => {
+        this.emits.write(chunk);
+        emits?.write?.(chunk);
+      },
+      complete: (content) => {
+        emits?.complete?.(content);
+      },
+      error: (error) => {
+        this.emits.error(error);
+        this.status = "error";
+        console.error(error);
+        emits?.error?.(error);
+      },
+      cancel: (fn) => {
+        this.emits.cancel(fn);
+        emits?.cancel?.(fn);
+      },
+    };
+  }
+
+  private async request(params: Parameters<Request["requestAsStream"]>[0]) {
+    try {
+      const response = await this.requestInstance.requestAsStream(params);
+      if (response.type === "error") {
+        this.pushUserFriendlyMessages({
+          role: "error",
+          content: `接口调用错误：${response.content instanceof Error ? response.content.message : response.content}`,
+        });
+        return null;
+      } else if (response.type === "cancel") {
+        this.pushUserFriendlyMessages({
+          role: "error",
+          content: "已取消执行",
+        });
+        return null;
+      }
+      return response.content;
+    } catch (e) {
+      this.pushUserFriendlyMessages({
+        role: "error",
+        content: `接口调用错误：${e instanceof Error ? e.message : e}`,
+      });
+      return null;
+    }
+  }
+
+  private async toolExecute(
+    tool: Tool,
+    params?: Parameters<Tool["execute"]>[0],
+  ) {
+    try {
+      const result = await tool.execute(params!);
+      return result;
+    } catch (e) {
+      this.status = "error";
+      this.userFriendlyMessages[this.userFriendlyMessages.length - 1].status =
+        "error";
+      const content = `工具调用失败：${e instanceof Error ? e.message : e}`;
+      console.error(content);
+      this.pushUserFriendlyMessages({
+        role: "error",
+        content,
+      });
+      return new Error("Tool Execute Error");
     }
   }
 }
