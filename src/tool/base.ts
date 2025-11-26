@@ -26,4 +26,19 @@ const normalizeToolMessage = (message: string | ToolMessage): ToolMessage => {
   return message;
 };
 
-export { ToolError, normalizeToolMessage };
+const normalizeToolError = (error: unknown, message: string = "错误") => {
+  console.error("[Rxai - error]", error);
+  if (error instanceof ToolError) {
+    return error;
+  } else if (error instanceof Error) {
+    const message = error.message;
+    return new ToolError({ displayContent: message, llmContent: message });
+  } else {
+    return new ToolError({
+      displayContent: message,
+      llmContent: message,
+    });
+  }
+};
+
+export { ToolError, normalizeToolMessage, normalizeToolError };

@@ -12,17 +12,15 @@ interface Emits {
   cancel: (cb: () => void) => void;
 }
 
-/** 工具execute所需的文件 */
-interface File {
+/** 工具execute所需的文件列表 */
+type Files = {
   fileName: string;
   name: string;
   extension: string;
   language: string;
   content: string;
   isComplete: boolean;
-}
-/** 工具execute所需的文件列表 */
-type Files = Record<string, File | File[]>;
+}[];
 
 /** 工具 */
 interface Tool {
