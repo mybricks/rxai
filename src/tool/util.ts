@@ -8,9 +8,12 @@ export function parseFileBlocks(content: string) {
   let currentIndex = 0;
 
   while (currentIndex < content.length) {
-    // 查找代码块开始标记
-    // const startPattern = /```(\w+)\s+type="([^"]+)"\s+file="([^"]+)"\s*\n/g;
-    const startPattern = /```(\w+)\s+(?:file|title)="([^"]+)"\s*\n/g;
+    // 查找代码块开始标记，支持多种格式：
+    // 1. ```language file="filename"
+    // 2. ```language title="filename"
+    // 3. ```language
+    // 4. ```
+    const startPattern = /```(?:(\w+)(?:\s+(?:file|title)="([^"]+)")?)?\s*\n/g;
     startPattern.lastIndex = currentIndex;
 
     const startMatch = startPattern.exec(content);
@@ -18,7 +21,6 @@ export function parseFileBlocks(content: string) {
       break; // 没有更多代码块
     }
 
-    // const [startFullMatch, language, type, fileName] = startMatch;
     const [startFullMatch, language, fileName] = startMatch;
     const contentStartIndex = startMatch.index + startFullMatch.length;
 
@@ -46,38 +48,67 @@ export function parseFileBlocks(content: string) {
       currentIndex = content.length;
     }
 
-    // 解析文件名
-    const lastDotIndex = fileName.lastIndexOf(".");
-    const name =
-      lastDotIndex !== -1 ? fileName.substring(0, lastDotIndex) : fileName;
-    const extension =
-      lastDotIndex !== -1 ? fileName.substring(lastDotIndex + 1) : "";
+    // 生成文件名和解析文件信息
+    let finalFileName = fileName || "";
+    let name = "";
+    let extension = "";
+
+    if (finalFileName) {
+      // 有明确的文件名
+      const lastDotIndex = finalFileName.lastIndexOf(".");
+      name =
+        lastDotIndex !== -1
+          ? finalFileName.substring(0, lastDotIndex)
+          : finalFileName;
+      extension =
+        lastDotIndex !== -1 ? finalFileName.substring(lastDotIndex + 1) : "";
+    } else if (isComplete) {
+      // 只有在代码块完整时才生成默认文件名
+      if (language) {
+        const extensionMap: { [key: string]: string } = {
+          javascript: "js",
+          typescript: "ts",
+          python: "py",
+          java: "java",
+          html: "html",
+          css: "css",
+          json: "json",
+          xml: "xml",
+          yaml: "yml",
+          yml: "yml",
+          markdown: "md",
+          md: "md",
+          shell: "sh",
+          bash: "sh",
+          sql: "sql",
+          php: "php",
+          ruby: "rb",
+          go: "go",
+          rust: "rs",
+          swift: "swift",
+          kotlin: "kt",
+        };
+
+        extension = extensionMap[language.toLowerCase()] || language;
+        finalFileName = `code_block_${results.length + 1}.${extension}`;
+        name = `code_block_${results.length + 1}`;
+      } else {
+        // 既没有语言也没有文件名
+        finalFileName = `code_block_${results.length + 1}.txt`;
+        name = `code_block_${results.length + 1}`;
+        extension = "txt";
+      }
+    }
 
     results.push({
-      fileName: fileName,
+      fileName: finalFileName,
       name: name,
       extension: extension,
-      // type: type,
-      language: language,
+      language: language || "",
       content: blockContent,
       isComplete: isComplete,
     });
   }
 
-  const files: any = {};
-
-  results.forEach((result) => {
-    if (!files[result.fileName]) {
-      files[result.fileName] = result;
-    } else {
-      const sameNameFiles = files[result.fileName];
-      if (Array.isArray(sameNameFiles)) {
-        sameNameFiles.push(result);
-      } else {
-        files[result.fileName] = [files[result.fileName], result];
-      }
-    }
-  });
-
-  return files;
+  return results;
 }
