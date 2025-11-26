@@ -426,8 +426,6 @@ class PlanningAgent extends BaseAgent {
         return;
       }
 
-      messages.push({ role: "assistant", content: response });
-
       // 解析文件
       const files = parseFileBlocks(response);
 
@@ -450,6 +448,8 @@ class PlanningAgent extends BaseAgent {
       }
 
       toolResult = normalizeToolMessage(toolResult2);
+
+      messages.push({ role: "assistant", content: toolResult.llmContent });
     }
 
     if (isLastPlan) {
