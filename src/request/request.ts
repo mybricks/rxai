@@ -1,3 +1,5 @@
+import { normalizeToolError, ToolError } from "../tool/base";
+
 interface RequestAsStreamParams {
   messages: ChatMessages;
   aiRole?: AiRole;
@@ -6,7 +8,7 @@ interface RequestAsStreamParams {
 }
 
 interface RequestOptions {
-  requestAsStream: (params: RequestAsStreamParams) => void;
+  requestAsStream: (params: RequestAsStreamParams) => void | Promise<unknown>;
 }
 
 class Request {
@@ -19,7 +21,7 @@ class Request {
     params: RequestAsStreamParams,
   ): Promise<
     | { type: "complete"; content: string }
-    | { type: "error"; content: Error }
+    | { type: "error"; content: ToolError }
     | { type: "cancel"; content: string }
   > {
     return new Promise((resolve) => {
@@ -35,44 +37,63 @@ class Request {
             console.log("[Request - requestAsStream - complete]", content);
           }
           emits.complete(content.replace(/^M:/, ""));
+          console.log("接口返回结果", content.replace(/^M:/, ""));
           resolve({
             type: "complete",
             content: content.replace(/^M:/, ""),
           });
         },
-        error(ex) {
+        error(error) {
           if (enableLog) {
-            console.log("[Request - requestAsStream - error]", ex);
+            console.log("[Request - requestAsStream - error]", error);
           }
-          emits.error(ex);
+          emits.error(error);
           resolve({
             type: "error",
-            content: ex,
+            content: normalizeToolError(error, "接口调用错误"),
           });
         },
-        cancel(fn) {
+        cancel(cancel) {
           emits.cancel(() => {
             resolve({
               type: "cancel",
               content,
             });
-            fn();
+            cancel();
           });
         },
       };
 
-      this.options.requestAsStream({
-        messages,
-        emits: emitsProxy,
-        aiRole,
-      });
+      (async () => {
+        try {
+          await this.options.requestAsStream({
+            messages,
+            emits: emitsProxy,
+            aiRole,
+          });
+        } catch (error) {
+          resolve({
+            type: "error",
+            content: normalizeToolError(error, "接口调用错误"),
+          });
+        }
+      })();
 
       // import("./preset/cdzd").then((module) => {
-      //   module.requestAsStream({
-      //     messages,
-      //     emits: emitsProxy,
-      //     aiRole,
-      //   });
+      //   (async () => {
+      //     try {
+      //       await module.requestAsStream({
+      //         messages,
+      //         emits: emitsProxy,
+      //         aiRole,
+      //       });
+      //     } catch (error) {
+      //       resolve({
+      //         type: "error",
+      //         content: normalizeToolError(error, "接口调用错误"),
+      //       });
+      //     }
+      //   })();
       // });
     });
   }
