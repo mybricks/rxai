@@ -31,7 +31,11 @@ interface Tool {
   displayName: string;
   getPrompts?: (params: { attachments?: Attachment[] }) => string;
   aiRole?: "image" | "architect" | "expert";
-  execute: (params?: { files: Files; key: string; content: string }) => string;
+  execute: (params?: {
+    files: Files;
+    key: string;
+    content: string;
+  }) => string | { displayContent: string; llmContent: string };
   stream?: (params: {
     files: Files;
     status: "start" | "ing" | "complete";

@@ -5,6 +5,7 @@ import { getToolPrompt } from "../prompt/tool";
 import { throttle } from "../utils/throttle";
 import { Events } from "../utils/events";
 import { Request } from "../request/request";
+import { ToolError, normalizeToolMessage } from "../tool/base";
 
 interface PlanningAgentOptions extends BaseAgentOptions {
   emits: Emits;
@@ -253,12 +254,12 @@ class PlanningAgent extends BaseAgent {
       if (!toolPrompt) {
         // 没有提示词，走本地调用，执行execute
         const content = await this.toolExecute(tool);
-        if (content instanceof Error) {
+        if (content instanceof ToolError) {
           continue;
         }
+        const { displayContent, llmContent } = normalizeToolMessage(content);
 
-        this.messages.push({ role: "assistant", content });
-
+        this.messages.push({ role: "assistant", content: llmContent });
         this.userFriendlyMessages[this.userFriendlyMessages.length - 1].status =
           "success";
 
@@ -266,7 +267,7 @@ class PlanningAgent extends BaseAgent {
           // 最后一项或者需要展示结果
           this.pushUserFriendlyMessages({
             role: "assistant",
-            content,
+            content: displayContent,
           });
         }
 
@@ -311,7 +312,7 @@ class PlanningAgent extends BaseAgent {
           }
 
           // 最后一个工具完成后，认为最终完成
-          this.emits.complete(content);
+          this.emits.complete(llmContent);
         }
         continue;
       }
@@ -372,11 +373,13 @@ class PlanningAgent extends BaseAgent {
           content: response,
         });
 
-        if (content instanceof Error) {
+        if (content instanceof ToolError) {
           continue;
         }
 
-        this.messages.push({ role: "assistant", content });
+        const { displayContent, llmContent } = normalizeToolMessage(content);
+
+        this.messages.push({ role: "assistant", content: llmContent });
         this.userFriendlyMessages[this.userFriendlyMessages.length - 1].status =
           "success";
 
@@ -386,7 +389,7 @@ class PlanningAgent extends BaseAgent {
             // 不需要再次请求
             this.pushUserFriendlyMessages({
               role: "assistant",
-              content,
+              content: displayContent,
             });
           }
 
@@ -428,7 +431,7 @@ class PlanningAgent extends BaseAgent {
           }
 
           // 最后一个工具完成后，认为最终完成
-          this.emits.complete(content);
+          this.emits.complete(llmContent);
         } else {
           this.pushUserFriendlyMessages();
         }
@@ -504,7 +507,9 @@ class PlanningAgent extends BaseAgent {
   private async toolExecute(
     tool: Tool,
     params?: Parameters<Tool["execute"]>[0],
-  ) {
+  ): Promise<
+    string | { displayContent: string; llmContent: string } | ToolError
+  > {
     try {
       const result = await tool.execute(params!);
       return result;
@@ -512,17 +517,38 @@ class PlanningAgent extends BaseAgent {
       this.status = "error";
       this.userFriendlyMessages[this.userFriendlyMessages.length - 1].status =
         "error";
-      const content = `工具调用失败：${e instanceof Error ? e.message : e}`;
-      console.error(content);
+
+      let displayContent = "";
+      let llmContent = "";
+      let result = e;
+
+      if (e instanceof ToolError) {
+        const message = e.message;
+        displayContent = message.displayContent;
+        llmContent = message.llmContent;
+      } else if (e instanceof Error) {
+        displayContent = llmContent = e.message;
+        result = new ToolError({ displayContent, llmContent: displayContent });
+      } else {
+        console.error("[Rxai - error]: 请使用「ToolError」提供错误信息");
+        displayContent = llmContent = "工具调用错误";
+        result = new ToolError({
+          displayContent,
+          llmContent,
+        });
+      }
+
+      console.error(e);
       this.pushUserFriendlyMessages({
         role: "error",
-        content,
+        content: displayContent,
       });
       this.messages.push({
         role: "assistant",
-        content,
+        content: llmContent,
       });
-      return new Error("Tool Execute Error");
+
+      return result as ToolError;
     }
   }
 }
