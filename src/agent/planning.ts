@@ -220,26 +220,11 @@ class PlanningAgent extends BaseAgent {
           });
 
         // 工具检查
-        let errorTools = "";
+        const { valid, validTools, invalidTools } =
+          this.validatePlanListTools(planList);
 
-        const checkPlanList = planList.filter((plan) => {
-          const tool = this.tools.find((tool) => {
-            return tool.name === plan;
-          });
-          if (!tool) {
-            if (!errorTools) {
-              errorTools = plan;
-            } else {
-              errorTools += `, ${plan}`;
-            }
-            return false;
-          }
-
-          return true;
-        });
-
-        if (checkPlanList.length !== planList.length) {
-          const content = `规划错误，使用了不存在的工具(${errorTools})`;
+        if (!valid) {
+          const content = `规划错误，使用了不存在的工具(${invalidTools.join(", ")})`;
           this.setError(
             new ToolError({
               displayContent: content,
@@ -249,7 +234,7 @@ class PlanningAgent extends BaseAgent {
           return;
         }
 
-        this.planList = planList.map((plan: string) => {
+        this.planList = validTools.map((plan: string) => {
           return {
             name: plan,
             status: null,
@@ -346,7 +331,10 @@ class PlanningAgent extends BaseAgent {
     /** 工具提示词 */
     const toolPrompt = getToolPrompt(tool, { attachments: this.attachments });
 
-    let toolResult: ReturnType<typeof normalizeToolMessage>;
+    let toolResult:
+      | ReturnType<typeof normalizeToolMessage>
+      | ToolError
+      | string;
 
     if (!toolPrompt) {
       // 没有提示词，走本地调用，执行execute
@@ -430,24 +418,24 @@ class PlanningAgent extends BaseAgent {
       const files = parseFileBlocks(response);
 
       // 执行工具
-      const toolResult2 = await this.toolExecute(tool, {
+      toolResult = await this.toolExecute(tool, {
         files,
         key: this.key,
         content: response,
       });
 
-      if (toolResult2 instanceof ToolError) {
+      if (toolResult instanceof ToolError) {
         this.errorMessages = [
           ...messages.slice(1),
           {
             role: "user",
-            content: `工具调用调用错误：${toolResult2.message.llmContent}`,
+            content: `工具调用调用错误：${toolResult.message.llmContent}`,
           },
         ];
         return;
       }
 
-      toolResult = normalizeToolMessage(toolResult2);
+      toolResult = normalizeToolMessage(toolResult);
 
       messages.push({ role: "assistant", content: toolResult.llmContent });
     }
@@ -618,6 +606,35 @@ class PlanningAgent extends BaseAgent {
   private async retry() {
     this.status = "pending";
     this.start();
+  }
+
+  /**
+   * 检查计划列表中的工具是否存在
+   * @param planList 工具名称列表
+   * @returns 检查结果，valid为true时表示所有工具都存在
+   */
+  private validatePlanListTools(planList: string[]): {
+    valid: boolean;
+    validTools: string[];
+    invalidTools: string[];
+  } {
+    const validTools: string[] = [];
+    const invalidTools: string[] = [];
+
+    for (const plan of planList) {
+      const tool = this.tools.find((tool) => tool.name === plan);
+      if (tool) {
+        validTools.push(plan);
+      } else {
+        invalidTools.push(plan);
+      }
+    }
+
+    return {
+      valid: invalidTools.length === 0,
+      validTools,
+      invalidTools,
+    };
   }
 
   private setError(error: ToolError) {
