@@ -3,10 +3,9 @@ const getToolPrompt = (tool: Tool, params: { attachments?: Attachment[] }) => {
   if (!prompt) {
     return null;
   }
-  return `<当前调用工具描述>
+  return `
 你是一个可被调用的工具（${tool.name}），用于${tool.description}。
-请按照下述工具详细描述，完成工具调用。
-${prompt}
+请按照下述工具详细描述，完成工具调用，根据<输出约束条件>提供输出。
 
 <输出约束条件>
   <输出格式>
@@ -14,12 +13,14 @@ ${prompt}
     目前通用的文件返回格式参考 github 的 info string 格式，必须声明title属性，也就是文件名。
   </输出格式>
 
-  <保持专注>
-    历史对话消息中调用工具的回答不完全是大模型的输出（有可能是总结过的内容），不具备参考性，必须按照「输出格式」进行输出。
-  </保持专注>
+  <保持system消息专注>
+    历史对话消息中调用工具的返回不等于输出格式，不具备参考性，必须按照「输出格式」进行输出。
+  </保持system消息专注>
 </输出约束条件>
 
-</当前调用工具描述>`;
+<当前调用工具详细描述>
+${prompt}
+</当前调用工具详细描述>`;
 };
 
 export { getToolPrompt };
