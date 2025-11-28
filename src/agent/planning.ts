@@ -82,7 +82,19 @@ class PlanningAgent extends BaseAgent {
     if (this.loading || this.status === "pending") {
       return [];
     }
-    return [...this.presetMessages, ...this.messages];
+
+    const userRequireMessage = this.messages[0];
+    const toolsMessages = this.messages.slice(1);
+
+    const summaryMessage = {
+      role: "user",
+      content: `<当轮操作总结>
+${toolsMessages.reduce((acc, cur) => {
+  return acc + "\n\n" + cur.content;
+}, "")}
+</当轮操作总结>`,
+    };
+    return [...this.presetMessages, userRequireMessage, summaryMessage];
   }
 
   async run() {
