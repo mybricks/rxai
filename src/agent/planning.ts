@@ -377,13 +377,22 @@ ${toolsMessages.reduce((acc, cur) => {
       let content = "";
 
       const stream = tool.stream
-        ? throttle((content, status) => {
+        ? (content: string, status: "start" | "ing" | "complete") => {
             tool.stream!({
               files: parseFileBlocks(content),
               status,
             });
-          }, 1000)
+          }
         : null;
+
+      // const stream = tool.stream
+      //   ? throttle((content, status) => {
+      //       tool.stream!({
+      //         files: parseFileBlocks(content),
+      //         status,
+      //       });
+      //     }, 1000)
+      //   : null;
 
       stream?.("", "start");
 
