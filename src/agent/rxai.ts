@@ -17,6 +17,7 @@ interface RequestParams {
   tools: Tool[];
   planList?: string[];
   enableLog?: boolean;
+  extension?: unknown;
 }
 
 interface RxaiOptions {
@@ -56,6 +57,7 @@ class Rxai extends BaseAgent {
       tools,
       planList,
       enableLog,
+      extension,
     } = params;
     const index = this.cacheIndex++;
     const planningAgent = new PlanningAgent({
@@ -78,6 +80,7 @@ class Rxai extends BaseAgent {
       presetMessages: presetMessages || [],
       planList,
       enableLog: typeof enableLog === "boolean" ? enableLog : this.enableLog,
+      extension,
     });
 
     this.cacheMessages[index] = planningAgent;

@@ -20,6 +20,7 @@ interface PlanningAgentOptions extends BaseAgentOptions {
   historyMessages: ChatMessages;
   presetMessages: ChatMessages;
   planList?: string[];
+  extension?: unknown;
 }
 
 /**
@@ -35,13 +36,15 @@ class PlanningAgent extends BaseAgent {
   private key: string;
   private message: string;
   /** 附件 */
-  private attachments?: Attachment[];
+  attachments?: Attachment[];
   /** 历史记录 */
   private historyMessages: ChatMessages;
   /** 预设消息，调用方提前注入 */
   private presetMessages: ChatMessages;
   /** 用户友好消息列表 */
   private userFriendlyMessages: any[] = [];
+
+  extension?: unknown;
 
   events = new Events<{
     loading: boolean;
@@ -76,6 +79,7 @@ class PlanningAgent extends BaseAgent {
           status: null,
         };
       }) || [];
+    this.extension = options.extension;
   }
 
   getMessages() {
