@@ -14,6 +14,7 @@ interface RequestParams {
   key: string;
   attachments?: Attachment[];
   presetMessages?: ChatMessages;
+  presetHistoryMessages?: ChatMessages;
   tools: Tool[];
   planList?: string[];
   enableLog?: boolean;
@@ -54,6 +55,7 @@ class Rxai extends BaseAgent {
       key,
       attachments,
       presetMessages,
+      presetHistoryMessages,
       tools,
       planList,
       enableLog,
@@ -78,6 +80,7 @@ class Rxai extends BaseAgent {
       }, [] as ChatMessages),
       attachments,
       presetMessages: presetMessages || [],
+      presetHistoryMessages: presetHistoryMessages || [],
       planList,
       enableLog: typeof enableLog === "boolean" ? enableLog : this.enableLog,
       extension,
