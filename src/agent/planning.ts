@@ -282,6 +282,7 @@ ${toolsMessages.reduce((acc, cur) => {
           ],
           type: "push",
         });
+        this.status = "success";
       }
     }
 
