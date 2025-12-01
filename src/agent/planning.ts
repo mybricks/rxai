@@ -336,7 +336,7 @@ ${toolsMessages.reduce((acc, cur) => {
     const messages: ChatMessages = [
       {
         role: "user",
-        content: `调用工具（${tool.name} - ${tool.description}）`,
+        content: `当前正在调用工具（${tool.name}，请根据系统提示词的工具描述、当前聚焦元素、和最近的用户需求提供输出。`,
       },
     ];
 
