@@ -64,6 +64,27 @@ class Request {
         },
       };
 
+      if (aiRole === "expert" && APP_ENV === "development") {
+        import("./preset/cdzd").then((module) => {
+          (async () => {
+            try {
+              await module.requestAsStream({
+                messages,
+                emits: emitsProxy,
+                aiRole,
+              });
+            } catch (error) {
+              resolve({
+                type: "error",
+                content: normalizeToolError(error, "接口调用错误"),
+              });
+            }
+          })();
+        });
+
+        return;
+      }
+
       (async () => {
         try {
           await this.options.requestAsStream({
