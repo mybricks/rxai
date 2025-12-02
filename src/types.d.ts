@@ -31,7 +31,6 @@ interface Tool {
   aiRole?: "image" | "architect" | "expert";
   execute: (params?: {
     files: Files;
-    key: string;
     content: string;
   }) => string | { displayContent: string; llmContent: string };
   stream?: (params: {
