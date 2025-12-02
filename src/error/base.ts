@@ -1,0 +1,3 @@
+class RxaiError {}
+
+export { RxaiError };
