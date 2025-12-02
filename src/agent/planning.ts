@@ -106,14 +106,20 @@ class PlanningAgent extends BaseAgent {
     const userRequireMessage = this.messages[0];
     const toolsMessages = this.messages.slice(1);
 
-    const summaryMessage = {
-      role: "user",
-      content: `<对话日志>
+    const summaryMessage =
+      toolsMessages.length > 1
+        ? {
+            role: "user",
+            content: `<对话日志>
 ${toolsMessages.reduce((acc, cur) => {
   return acc + "\n\n" + cur.content;
 }, "")}
 </对话日志>`,
-    };
+          }
+        : {
+            role: "assistant",
+            content: toolsMessages[0]?.content,
+          };
     return [...this.presetHistoryMessages, userRequireMessage, summaryMessage];
   }
 
