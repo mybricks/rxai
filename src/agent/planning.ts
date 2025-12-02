@@ -96,11 +96,11 @@ class PlanningAgent extends BaseAgent {
 
     const summaryMessage = {
       role: "user",
-      content: `<当轮操作总结>
+      content: `<对话日志>
 ${toolsMessages.reduce((acc, cur) => {
   return acc + "\n\n" + cur.content;
 }, "")}
-</当轮操作总结>`,
+</对话日志>`,
     };
     return [...this.presetHistoryMessages, userRequireMessage, summaryMessage];
   }
