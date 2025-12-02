@@ -2,19 +2,19 @@ import { getSystemPrompt } from "../prompt/planning";
 import { BaseAgent, BaseAgentOptions } from "./base";
 import { parseFileBlocks } from "../tool/util";
 import { getToolPrompt } from "../prompt/tool";
-import { throttle } from "../utils/throttle";
 import { Events } from "../utils/events";
 import { Request } from "../request/request";
+import { IDB } from "../utils/idb";
 import {
   ToolError,
   normalizeToolError,
   normalizeToolMessage,
 } from "../tool/base";
+import { uuid } from "../utils/uuid";
 
 interface PlanningAgentOptions extends BaseAgentOptions {
   emits: Emits;
   tools: Tool[];
-  key: string;
   message: string;
   attachments?: Attachment[];
   historyMessages: ChatMessages;
@@ -22,19 +22,27 @@ interface PlanningAgentOptions extends BaseAgentOptions {
   presetHistoryMessages: ChatMessages;
   planList?: string[];
   extension?: unknown;
+  idb?: IDB;
+  uuid?: string;
 }
+
+type PlanList = {
+  name: string;
+  status: "pending" | "success" | "error" | null;
+}[];
+
+type PlanStatus = "pending" | "success" | "error" | "aborted";
 
 /**
  * 分析计划
  * 执行计划
  */
 class PlanningAgent extends BaseAgent {
-  planList: { name: string; status: "pending" | "success" | "error" | null }[] =
-    [];
+  uuid: string;
+  planList: PlanList = [];
   planIndex: number = 0;
   private tools: Tool[];
   private emits: Emits;
-  private key: string;
   private message: string;
   /** 附件 */
   attachments?: Attachment[];
@@ -59,31 +67,35 @@ class PlanningAgent extends BaseAgent {
   loading = true;
 
   /** 状态 */
-  status: "pending" | "success" | "error" | "aborted" = "pending";
+  status: PlanStatus = "pending";
 
   toolError: ToolError | null = null;
 
   /** 未完成的接口请求 */
   errorMessages: ChatMessages = [];
 
+  idb?: IDB;
+
   constructor(options: PlanningAgentOptions) {
     super(options);
     this.tools = options.tools;
     this.emits = options.emits;
-    this.key = options.key;
     this.message = options.message;
     this.attachments = options.attachments;
     this.historyMessages = options.historyMessages;
     this.presetMessages = options.presetMessages;
     this.presetHistoryMessages = options.presetHistoryMessages;
-    this.planList =
+    this.setPlanList(
       options.planList?.map((plan) => {
         return {
           name: plan,
           status: null,
         };
-      }) || [];
+      }) || [],
+    );
     this.extension = options.extension;
+    this.idb = options.idb;
+    this.uuid = options.uuid || uuid();
   }
 
   getMessages() {
@@ -127,12 +139,12 @@ ${toolsMessages.reduce((acc, cur) => {
             }),
         ]
       : this.message;
-
-    // 推送消息
-    this.messages.push({
-      role: "user",
-      content,
-    });
+    this.pushMessages([
+      {
+        role: "user",
+        content,
+      },
+    ]);
 
     // 推送用户友好消息
     this.emitUserFriendlyMessages({
@@ -147,26 +159,65 @@ ${toolsMessages.reduce((acc, cur) => {
 
     if (this.planList.length) {
       // 外部定义的规划流程
-      this.messages.push({
-        role: "assistant",
-        content: `已规划出实现需求所需的完整步骤，将按顺序执行以下工具，${this.planList.map((t) => t.name).join("、")}`,
-      });
+      this.pushMessages([
+        {
+          role: "assistant",
+          content: `已规划出实现需求所需的完整步骤，将按顺序执行以下工具，${this.planList.map((t) => t.name).join("、")}`,
+        },
+      ]);
     }
 
     this.start();
   }
 
+  private pushMessages(messages: ChatMessages) {
+    // 推送消息
+    this.messages.push(...messages);
+
+    this.idb?.putContent({
+      id: this.uuid,
+      type: "messages",
+      content: this.messages,
+    });
+  }
+
+  private setLoading(loading: boolean) {
+    this.loading = loading;
+    this.events.emit("loading", loading);
+    this.idb?.putContent({
+      id: this.uuid,
+      type: "loading",
+      content: loading,
+    });
+  }
+
+  private setErrorMessages(errorMessages: ChatMessages) {
+    this.errorMessages = errorMessages;
+    this.idb?.putContent({
+      id: this.uuid,
+      type: "errorMessages",
+      content: this.errorMessages,
+    });
+  }
+
+  private setPlanList(planList: PlanList) {
+    this.planList = planList;
+    this.idb?.putContent({
+      id: this.uuid,
+      type: "planList",
+      content: planList,
+    });
+  }
+
   private async start() {
     if (!this.planList.length) {
-      this.loading = true;
-      this.events.emit("loading", this.loading);
+      this.setLoading(true);
       // 没有规划，获取规划
       await this.getPlanList();
     }
 
     // 规划结束立即结束loading，后续状态由工具决定
-    this.loading = false;
-    this.events.emit("loading", this.loading);
+    this.setLoading(false);
     // 执行工具
     await this.executePlanList();
   }
@@ -186,7 +237,7 @@ ${toolsMessages.reduce((acc, cur) => {
     }
 
     messages.push(...this.errorMessages);
-    this.errorMessages = [];
+    this.setErrorMessages([]);
 
     return messages;
   }
@@ -210,7 +261,7 @@ ${toolsMessages.reduce((acc, cur) => {
     });
 
     if (response instanceof ToolError) {
-      this.errorMessages = [
+      this.setErrorMessages([
         {
           role: "assistant",
           content: `规划接口调用错误：${response.message.llmContent}`,
@@ -219,7 +270,7 @@ ${toolsMessages.reduce((acc, cur) => {
           role: "user",
           content: "请重试",
         },
-      ];
+      ]);
       return;
     }
 
@@ -254,24 +305,30 @@ ${toolsMessages.reduce((acc, cur) => {
           return;
         }
 
-        this.planList = validTools.map((plan: string) => {
-          return {
-            name: plan,
-            status: null,
-          };
-        });
-        this.messages.push({
-          role: "assistant",
-          content: response,
-        });
+        this.setPlanList(
+          validTools.map((plan: string) => {
+            return {
+              name: plan,
+              status: null,
+            };
+          }),
+        );
+        this.pushMessages([
+          {
+            role: "assistant",
+            content: response,
+          },
+        ]);
         return true;
       } else {
         // 没有返回计划列表，结束
         this.emits.complete(response);
-        this.messages.push({
-          role: "assistant",
-          content: response,
-        });
+        this.pushMessages([
+          {
+            role: "assistant",
+            content: response,
+          },
+        ]);
 
         this.emitUserFriendlyMessages({
           messages: [
@@ -282,11 +339,10 @@ ${toolsMessages.reduce((acc, cur) => {
           ],
           type: "push",
         });
-        this.status = "success";
+        this.setStatus("success");
       }
     }
-
-    this.toolError = null;
+    this.setToolError(null);
   }
 
   private async executePlanList() {
@@ -305,9 +361,14 @@ ${toolsMessages.reduce((acc, cur) => {
         await this.executeTool(plan.name);
         if (this.status === "pending") {
           this.planIndex++;
+          this.idb?.putContent({
+            id: this.uuid,
+            type: "planIndex",
+            content: this.planIndex,
+          });
           plan.status = "success";
           if (this.planList.length === this.planIndex) {
-            this.status = "success";
+            this.setStatus("success");
           }
         } else {
           plan.status = "error";
@@ -316,6 +377,11 @@ ${toolsMessages.reduce((acc, cur) => {
         this.setError(normalizeToolError(error));
         plan.status = "error";
       }
+      this.idb?.putContent({
+        id: this.uuid,
+        type: "planList",
+        content: this.planList,
+      });
     }
     return;
   }
@@ -330,7 +396,10 @@ ${toolsMessages.reduce((acc, cur) => {
       {
         role: "tool",
         status: "pending",
-        content: tool,
+        content: {
+          name: tool.name,
+          displayName: tool.displayName,
+        },
       },
     ] as Parameters<PlanningAgent["emitUserFriendlyMessages"]>[0]["messages"];
 
@@ -361,7 +430,7 @@ ${toolsMessages.reduce((acc, cur) => {
       // 没有提示词，走本地调用，执行execute
       const content = await this.toolExecute(tool);
       if (content instanceof ToolError) {
-        this.errorMessages = [
+        this.setErrorMessages([
           ...messages.slice(1),
           {
             role: "assistant",
@@ -371,7 +440,7 @@ ${toolsMessages.reduce((acc, cur) => {
             role: "user",
             content: "请重试",
           },
-        ];
+        ]);
         return;
       }
       toolResult = normalizeToolMessage(content);
@@ -430,7 +499,7 @@ ${toolsMessages.reduce((acc, cur) => {
       });
 
       if (response instanceof ToolError) {
-        this.errorMessages = [
+        this.setErrorMessages([
           ...messages.slice(1),
           {
             role: "assistant",
@@ -440,7 +509,7 @@ ${toolsMessages.reduce((acc, cur) => {
             role: "user",
             content: "请重试",
           },
-        ];
+        ]);
         return;
       }
 
@@ -450,18 +519,17 @@ ${toolsMessages.reduce((acc, cur) => {
       // 执行工具
       toolResult = await this.toolExecute(tool, {
         files,
-        key: this.key,
         content: response,
       });
 
       if (toolResult instanceof ToolError) {
-        this.errorMessages = [
+        this.setErrorMessages([
           ...messages.slice(1),
           {
             role: "user",
             content: `工具调用调用错误：${toolResult.message.llmContent}`,
           },
-        ];
+        ]);
         return;
       }
 
@@ -501,7 +569,7 @@ ${toolsMessages.reduce((acc, cur) => {
         });
 
         if (response instanceof ToolError) {
-          this.errorMessages = [
+          this.setErrorMessages([
             ...messages.slice(1),
             {
               role: "assistant",
@@ -511,7 +579,7 @@ ${toolsMessages.reduce((acc, cur) => {
               role: "user",
               content: "请重试",
             },
-          ];
+          ]);
           return;
         }
 
@@ -543,10 +611,10 @@ ${toolsMessages.reduce((acc, cur) => {
     userFriendlyMessages[0].status = "success";
 
     // 清除toolError
-    this.toolError = null;
+    this.setToolError(null);
 
     // 完成请求，推送消息
-    this.messages.push(...messages);
+    this.pushMessages(messages);
 
     this.emitUserFriendlyMessages({
       messages: userFriendlyMessages,
@@ -558,7 +626,6 @@ ${toolsMessages.reduce((acc, cur) => {
   private emitUserFriendlyMessages(params: {
     messages: (ChatMessages[number] & {
       status?: "pending" | "success" | "error" | "aborted";
-      retry?: () => void;
     })[];
     type: "push" | "update";
   }) {
@@ -567,6 +634,11 @@ ${toolsMessages.reduce((acc, cur) => {
     if (type === "push") {
       this.userFriendlyMessages.push(...messages);
       this.events.emit("userFriendlyMessages", this.userFriendlyMessages);
+      this.idb?.putContent({
+        id: this.uuid,
+        type: "userFriendlyMessages",
+        content: this.userFriendlyMessages,
+      });
     } else {
       this.events.emit("userFriendlyMessages", [
         ...this.userFriendlyMessages,
@@ -587,7 +659,7 @@ ${toolsMessages.reduce((acc, cur) => {
       },
       error: (error) => {
         this.emits.error(error);
-        this.status = "error";
+        this.setStatus("error");
         console.error(error);
         emits?.error?.(error);
       },
@@ -633,8 +705,8 @@ ${toolsMessages.reduce((acc, cur) => {
     }
   }
 
-  private async retry() {
-    this.status = "pending";
+  async retry() {
+    this.setStatus("pending");
     this.start();
   }
 
@@ -667,21 +739,88 @@ ${toolsMessages.reduce((acc, cur) => {
     };
   }
 
-  private setError(error: ToolError) {
-    this.status = "error";
+  private setToolError(error: ToolError | null) {
     this.toolError = error;
+    this.idb?.putContent({
+      id: this.uuid,
+      type: "toolError",
+      content: error ? error.message : null,
+    });
+  }
+
+  private setError(error: ToolError) {
+    this.setStatus("error");
+    this.setToolError(error);
     this.emitUserFriendlyMessages({
       messages: [
         {
           role: "error",
           content: error.message.displayContent,
-          retry: () => {
-            this.retry();
-          },
         },
       ],
       type: "update",
     });
+  }
+
+  private setStatus(status: PlanStatus) {
+    this.status = status;
+    this.idb?.putContent({
+      id: this.uuid,
+      type: "status",
+      content: status,
+    });
+  }
+
+  getDBContent() {
+    return {
+      uuid: this.uuid,
+      extension: this.extension,
+      enableLog: this.enableLog,
+      attachments: this.attachments,
+      message: this.message,
+      presetHistoryMessages: this.presetHistoryMessages,
+      presetMessages: this.presetMessages,
+    };
+  }
+
+  recover(params: any) {
+    params.forEach(({ type, content }: any) => {
+      if (type === "toolError") {
+        if (content) {
+          // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+          // @ts-ignore
+          this[type] = new ToolError(content);
+        }
+      } else {
+        // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+        // @ts-ignore
+        this[type] = content;
+      }
+    });
+
+    if (this.status === "pending") {
+      // 未正常完成，设置为取消状态
+      this.status = "aborted";
+    }
+
+    this.loading = false;
+    this.events.emit("loading", false);
+
+    const userFriendlyMessages = [...this.userFriendlyMessages];
+
+    if (this.toolError) {
+      userFriendlyMessages.push({
+        role: "error",
+        content: this.toolError.message.displayContent,
+      });
+    } else if (this.status === "aborted") {
+      userFriendlyMessages.push({
+        role: "aborted",
+        content: "已取消",
+      });
+    }
+
+    this.events.emit("userFriendlyMessages", userFriendlyMessages);
   }
 }
 
