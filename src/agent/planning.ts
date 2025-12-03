@@ -384,7 +384,7 @@ ${toolsMessages.reduce((acc, cur) => {
           plan.status = "error";
         }
       } catch (error) {
-        this.setError(normalizeToolError(error));
+        this.setError(error as NonNullable<PlanError>);
         plan.status = "error";
       }
       this.idb?.putContent({
@@ -432,25 +432,27 @@ ${toolsMessages.reduce((acc, cur) => {
     const toolPrompt = getToolPrompt(tool, { attachments: this.attachments });
 
     let toolResult:
-      | ReturnType<typeof normalizeToolMessage>
-      | ToolError
-      | string;
+      | PlanError
+      | string
+      | ReturnType<typeof normalizeToolMessage>;
 
     if (!toolPrompt) {
       // 没有提示词，走本地调用，执行execute
       const content = await this.toolExecute(tool);
       if (content instanceof RxaiError) {
-        this.setErrorMessages([
-          ...messages.slice(1),
-          {
-            role: "assistant",
-            content: `工具调用调用错误：${content.message.llmContent}`,
-          },
-          {
-            role: "user",
-            content: "请重试",
-          },
-        ]);
+        if (content instanceof ToolError) {
+          this.setErrorMessages([
+            ...messages.slice(1),
+            {
+              role: "assistant",
+              content: `工具调用错误：${content.message.displayContent}`,
+            },
+            {
+              role: "user",
+              content: "请重试",
+            },
+          ]);
+        }
         return;
       }
       toolResult = normalizeToolMessage(content);
@@ -533,13 +535,19 @@ ${toolsMessages.reduce((acc, cur) => {
       });
 
       if (toolResult instanceof RxaiError) {
-        this.setErrorMessages([
-          ...messages.slice(1),
-          {
-            role: "user",
-            content: `工具调用调用错误：${toolResult.message.llmContent}`,
-          },
-        ]);
+        if (toolResult instanceof ToolError) {
+          this.setErrorMessages([
+            ...messages.slice(1),
+            {
+              role: "assistant",
+              content: `工具调用错误：${toolResult.message.displayContent}`,
+            },
+            {
+              role: "user",
+              content: "请重试",
+            },
+          ]);
+        }
         return;
       }
 
@@ -704,13 +712,15 @@ ${toolsMessages.reduce((acc, cur) => {
     tool: Tool,
     params?: Parameters<Tool["execute"]>[0],
   ): Promise<
-    string | { displayContent: string; llmContent: string } | ToolError
+    | string
+    | { displayContent: string; llmContent: string }
+    | NonNullable<PlanError>
   > {
     try {
       const result = await tool.execute(params!);
       return result;
     } catch (e) {
-      const toolError = normalizeToolError(e);
+      const toolError = e as NonNullable<PlanError>;
       this.setError(toolError);
       return toolError;
     }
@@ -804,7 +814,7 @@ ${toolsMessages.reduce((acc, cur) => {
 
   recover(params: any) {
     params.forEach(({ type, content }: any) => {
-      if (type === "toolError") {
+      if (type === "error") {
         if (content) {
           // eslint-disable-next-line @typescript-eslint/ban-ts-comment
           // @ts-ignore
