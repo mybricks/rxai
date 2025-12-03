@@ -95,7 +95,7 @@ class Request {
         } catch (error) {
           resolve({
             type: "error",
-            content: new RequestError(error as string),
+            content: new RequestError(error),
           });
         }
       })();
