@@ -7,11 +7,10 @@ interface ToolMessage {
 
 class ToolError extends RxaiError<ToolMessage> {
   constructor(error: ToolMessage) {
-    super(error);
-  }
-
-  get message() {
-    return this.error;
+    super({
+      error,
+      type: "tool",
+    });
   }
 }
 

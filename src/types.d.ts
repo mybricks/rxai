@@ -8,7 +8,7 @@ type ChatMessages = {
 interface Emits {
   write: (chunk: string) => void;
   complete: (content: string) => void;
-  error: (e: Error) => void;
+  error: (e: string) => void;
   cancel: (cb: () => void) => void;
 }
 

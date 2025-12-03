@@ -1,8 +1,16 @@
-class RxaiError<T> {
-  protected error: T;
+interface RxaiErrorOptions<E> {
+  error: E;
+  type: string;
+}
 
-  constructor(error: T) {
-    this.error = error;
+class RxaiError<E> {
+  protected error: E;
+
+  type: string;
+
+  constructor(options: RxaiErrorOptions<E>) {
+    this.error = options.error;
+    this.type = options.type;
   }
 
   get message() {

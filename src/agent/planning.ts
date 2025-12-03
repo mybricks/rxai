@@ -11,6 +11,8 @@ import {
   normalizeToolMessage,
 } from "../error/toolError";
 import { uuid } from "../utils/uuid";
+import { RxaiError } from "../error/base";
+import { RequestError } from "../error/requestError";
 
 interface PlanningAgentOptions extends BaseAgentOptions {
   emits: Emits;
@@ -32,6 +34,8 @@ type PlanList = {
 }[];
 
 type PlanStatus = "pending" | "success" | "error" | "aborted";
+
+type PlanError = ToolError | RequestError | null;
 
 /**
  * 分析计划
@@ -69,7 +73,7 @@ class PlanningAgent extends BaseAgent {
   /** 状态 */
   status: PlanStatus = "pending";
 
-  toolError: ToolError | null = null;
+  error: PlanError = null;
 
   /** 未完成的接口请求 */
   errorMessages: ChatMessages = [];
@@ -266,17 +270,17 @@ ${toolsMessages.reduce((acc, cur) => {
       emits: this.getEmits({}),
     });
 
-    if (response instanceof ToolError) {
-      this.setErrorMessages([
-        {
-          role: "assistant",
-          content: `规划接口调用错误：${response.message.llmContent}`,
-        },
-        {
-          role: "user",
-          content: "请重试",
-        },
-      ]);
+    if (response instanceof RxaiError) {
+      // this.setErrorMessages([
+      //   {
+      //     role: "assistant",
+      //     content: `规划接口调用错误：${response.message}`,
+      //   },
+      //   {
+      //     role: "user",
+      //     content: "请重试",
+      //   },
+      // ]);
       return;
     }
 
@@ -348,7 +352,7 @@ ${toolsMessages.reduce((acc, cur) => {
         this.setStatus("success");
       }
     }
-    this.setToolError(null);
+    this.setPlanError(null);
   }
 
   private async executePlanList() {
@@ -435,7 +439,7 @@ ${toolsMessages.reduce((acc, cur) => {
     if (!toolPrompt) {
       // 没有提示词，走本地调用，执行execute
       const content = await this.toolExecute(tool);
-      if (content instanceof ToolError) {
+      if (content instanceof RxaiError) {
         this.setErrorMessages([
           ...messages.slice(1),
           {
@@ -504,18 +508,18 @@ ${toolsMessages.reduce((acc, cur) => {
         aiRole: tool.aiRole,
       });
 
-      if (response instanceof ToolError) {
-        this.setErrorMessages([
-          ...messages.slice(1),
-          {
-            role: "assistant",
-            content: `工具调用调用错误：${response.message.llmContent}`,
-          },
-          {
-            role: "user",
-            content: "请重试",
-          },
-        ]);
+      if (response instanceof RxaiError) {
+        // this.setErrorMessages([
+        //   ...messages.slice(1),
+        //   {
+        //     role: "assistant",
+        //     content: `工具调用调用错误：${response.message}`,
+        //   },
+        //   {
+        //     role: "user",
+        //     content: "请重试",
+        //   },
+        // ]);
         return;
       }
 
@@ -528,7 +532,7 @@ ${toolsMessages.reduce((acc, cur) => {
         content: response,
       });
 
-      if (toolResult instanceof ToolError) {
+      if (toolResult instanceof RxaiError) {
         this.setErrorMessages([
           ...messages.slice(1),
           {
@@ -574,18 +578,18 @@ ${toolsMessages.reduce((acc, cur) => {
           aiRole: tool.aiRole,
         });
 
-        if (response instanceof ToolError) {
-          this.setErrorMessages([
-            ...messages.slice(1),
-            {
-              role: "assistant",
-              content: `工具调用调用错误：${response.message.llmContent}`,
-            },
-            {
-              role: "user",
-              content: "请重试",
-            },
-          ]);
+        if (response instanceof RxaiError) {
+          // this.setErrorMessages([
+          //   ...messages.slice(1),
+          //   {
+          //     role: "assistant",
+          //     content: `工具调用调用错误：${response.message}`,
+          //   },
+          //   {
+          //     role: "user",
+          //     content: "请重试",
+          //   },
+          // ]);
           return;
         }
 
@@ -617,7 +621,7 @@ ${toolsMessages.reduce((acc, cur) => {
     userFriendlyMessages[0].status = "success";
 
     // 清除toolError
-    this.setToolError(null);
+    this.setPlanError(null);
 
     // 完成请求，推送消息
     this.pushMessages(messages);
@@ -685,12 +689,13 @@ ${toolsMessages.reduce((acc, cur) => {
       this.setError(response.content);
       return response.content;
     } else if (response.type === "cancel") {
-      const toolError = new ToolError({
-        displayContent: "已取消执行",
-        llmContent: "已取消执行",
-      });
-      this.setError(toolError);
-      return toolError;
+      const error = new RequestError("已取消执行");
+      // const toolError = new ToolError({
+      //   displayContent: "已取消执行",
+      //   llmContent: "已取消执行",
+      // });
+      this.setError(error);
+      return error;
     }
     return response.content;
   }
@@ -745,23 +750,31 @@ ${toolsMessages.reduce((acc, cur) => {
     };
   }
 
-  private setToolError(error: ToolError | null) {
-    this.toolError = error;
+  private setPlanError(error: PlanError) {
+    this.error = error;
     this.idb?.putContent({
       id: this.uuid,
-      type: "toolError",
-      content: error ? error.message : null,
+      type: "error",
+      content: error
+        ? {
+            message: error.message,
+            type: error.type,
+          }
+        : null,
     });
   }
 
-  private setError(error: ToolError) {
+  private setError(error: NonNullable<PlanError>) {
     this.setStatus("error");
-    this.setToolError(error);
+    this.setPlanError(error);
     this.emitUserFriendlyMessages({
       messages: [
         {
           role: "error",
-          content: error.message.displayContent,
+          content:
+            error instanceof ToolError
+              ? error.message.displayContent
+              : error.message,
         },
       ],
       type: "update",
@@ -795,7 +808,10 @@ ${toolsMessages.reduce((acc, cur) => {
         if (content) {
           // eslint-disable-next-line @typescript-eslint/ban-ts-comment
           // @ts-ignore
-          this[type] = new ToolError(content);
+          this[type] =
+            content.type === "tool"
+              ? new ToolError(content.message)
+              : new RequestError(content.message);
         }
       } else {
         // eslint-disable-next-line @typescript-eslint/ban-ts-comment
@@ -814,10 +830,13 @@ ${toolsMessages.reduce((acc, cur) => {
 
     const userFriendlyMessages = [...this.userFriendlyMessages];
 
-    if (this.toolError) {
+    if (this.error) {
       userFriendlyMessages.push({
         role: "error",
-        content: this.toolError.message.displayContent,
+        content:
+          this.error instanceof RequestError
+            ? this.error.message
+            : this.error.message.displayContent,
       });
     } else if (this.status === "aborted") {
       userFriendlyMessages.push({

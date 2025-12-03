@@ -1,4 +1,4 @@
-import { normalizeToolError, ToolError } from "../error/toolError";
+import { RequestError } from "../error/requestError";
 
 interface RequestAsStreamParams {
   messages: ChatMessages;
@@ -21,7 +21,7 @@ class Request {
     params: RequestAsStreamParams,
   ): Promise<
     | { type: "complete"; content: string }
-    | { type: "error"; content: ToolError }
+    | { type: "error"; content: RequestError }
     | { type: "cancel"; content: string }
   > {
     return new Promise((resolve) => {
@@ -50,7 +50,7 @@ class Request {
           emits.error(error);
           resolve({
             type: "error",
-            content: normalizeToolError(error, "接口调用错误"),
+            content: new RequestError(error),
           });
         },
         cancel(cancel) {
@@ -95,7 +95,7 @@ class Request {
         } catch (error) {
           resolve({
             type: "error",
-            content: normalizeToolError(error, "接口调用错误"),
+            content: new RequestError(error as string),
           });
         }
       })();
