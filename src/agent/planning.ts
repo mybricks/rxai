@@ -230,6 +230,12 @@ ${toolsMessages.reduce((acc, cur) => {
     this.setLoading(false);
     // 执行工具
     await this.executePlanList();
+
+    if (this.status === "success") {
+      this.emits.complete("");
+    } else if (this.status === "error") {
+      this.emits.error("");
+    }
   }
 
   private getLLMMessages(params: { start?: ChatMessages; end?: ChatMessages }) {
@@ -392,12 +398,6 @@ ${toolsMessages.reduce((acc, cur) => {
         type: "planList",
         content: this.planList,
       });
-    }
-
-    if (this.status === "success") {
-      this.emits.complete("");
-    } else if (this.status === "error") {
-      this.emits.error("");
     }
 
     return;
