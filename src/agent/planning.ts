@@ -393,6 +393,13 @@ ${toolsMessages.reduce((acc, cur) => {
         content: this.planList,
       });
     }
+
+    if (this.status === "success") {
+      this.emits.complete("");
+    } else if (this.status === "error") {
+      this.emits.error("");
+    }
+
     return;
   }
 
