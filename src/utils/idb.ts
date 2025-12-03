@@ -76,57 +76,70 @@ class IDB {
   }
 
   async addPlan(plan: PlanningAgent) {
-    const db = await this.dbPromise;
-    const tx = db.transaction("plan", "readwrite");
-    const store = tx.objectStore("plan");
-    store.add({
-      key: this.key,
-      content: plan.getDBContent(),
-    });
+    try {
+      const db = await this.dbPromise;
+      const tx = db.transaction("plan", "readwrite");
+      const store = tx.objectStore("plan");
+      store.add({
+        key: this.key,
+        content: plan.getDBContent(),
+      });
+    } catch (e) {
+      console.error(e, plan);
+    }
   }
 
   async getPlans() {
-    const db = await this.dbPromise;
-    const tx = db.transaction("plan", "readonly");
-    const store = tx.objectStore("plan");
-    const index = store.index("key");
-    const plans = await index.getAll(this.key);
+    try {
+      const db = await this.dbPromise;
+      const tx = db.transaction("plan", "readonly");
+      const store = tx.objectStore("plan");
+      const index = store.index("key");
+      const plans = await index.getAll(this.key);
 
-    return await Promise.all(
-      plans.map(async (plan) => {
-        const {
-          content: { uuid },
-        } = plan;
-        const tx = db.transaction("content", "readwrite");
-        const store = tx.objectStore("content");
-        const content = await store.index("planId").getAll(uuid);
+      return await Promise.all(
+        plans.map(async (plan) => {
+          const {
+            content: { uuid },
+          } = plan;
+          const tx = db.transaction("content", "readwrite");
+          const store = tx.objectStore("content");
+          const content = await store.index("planId").getAll(uuid);
 
-        return { plan, content };
-      }),
-    );
+          return { plan, content };
+        }),
+      );
+    } catch (e) {
+      console.error(e);
+      return [];
+    }
   }
 
   async putContent(content: { id: string; type: string; content: unknown }) {
-    const db = await this.dbPromise;
-    const tx = db.transaction("content", "readwrite");
-    const store = tx.objectStore("content");
-    const { id, type, content: putContent } = content;
-    const res = await store.index("planId-type").get([id, type]);
-    const newRecord = {
-      planId: id,
-      type,
-      content: putContent,
-    };
+    try {
+      const db = await this.dbPromise;
+      const tx = db.transaction("content", "readwrite");
+      const store = tx.objectStore("content");
+      const { id, type, content: putContent } = content;
+      const res = await store.index("planId-type").get([id, type]);
+      const newRecord = {
+        planId: id,
+        type,
+        content: putContent,
+      };
 
-    if (res) {
-      const key = await store.index("planId-type").getKey([id, type])!;
-      store.put(newRecord, key);
-    } else {
-      store.add(newRecord);
+      if (res) {
+        const key = await store.index("planId-type").getKey([id, type])!;
+        store.put(newRecord, key);
+      } else {
+        store.add(newRecord);
+      }
+
+      // 等待事务完成
+      await tx.done;
+    } catch (e) {
+      console.error(e, content);
     }
-
-    // 等待事务完成
-    await tx.done;
   }
 
   async clear() {
