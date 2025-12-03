@@ -1,8 +1,8 @@
-class RequestError {
-  private error: string;
+import { RxaiError } from "./base";
 
+class RequestError extends RxaiError<string> {
   constructor(error: string) {
-    this.error = error;
+    super(error);
   }
 
   get message() {

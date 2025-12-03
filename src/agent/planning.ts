@@ -9,7 +9,7 @@ import {
   ToolError,
   normalizeToolError,
   normalizeToolMessage,
-} from "../tool/base";
+} from "../error/toolError";
 import { uuid } from "../utils/uuid";
 
 interface PlanningAgentOptions extends BaseAgentOptions {

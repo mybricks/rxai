@@ -1,4 +1,4 @@
-import { normalizeToolError, ToolError } from "../tool/base";
+import { normalizeToolError, ToolError } from "../error/toolError";
 
 interface RequestAsStreamParams {
   messages: ChatMessages;

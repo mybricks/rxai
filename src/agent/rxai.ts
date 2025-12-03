@@ -115,7 +115,7 @@ class Rxai extends BaseAgent {
       system: this.system,
       emits,
       message,
-      historyMessages: this.cacheMessages.reduce((pre, cur) => {
+      historyMessages: this.cacheMessages.slice(-10).reduce((pre, cur) => {
         pre.push(...cur.getMessages());
         return pre;
       }, [] as ChatMessages),

@@ -1,13 +1,13 @@
+import { RxaiError } from "./base";
+
 interface ToolMessage {
   displayContent: string;
   llmContent: string;
 }
 
-class ToolError {
-  private error: ToolMessage;
-
+class ToolError extends RxaiError<ToolMessage> {
   constructor(error: ToolMessage) {
-    this.error = error;
+    super(error);
   }
 
   get message() {
