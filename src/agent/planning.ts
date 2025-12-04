@@ -5,14 +5,11 @@ import { getToolPrompt } from "../prompt/tool";
 import { Events } from "../utils/events";
 import { Request } from "../request/request";
 import { IDB } from "../utils/idb";
-import {
-  ToolError,
-  normalizeToolError,
-  normalizeToolMessage,
-} from "../error/toolError";
+import { ToolError, normalizeToolMessage } from "../error/toolError";
 import { uuid } from "../utils/uuid";
 import { RxaiError } from "../error/base";
 import { RequestError } from "../error/requestError";
+import { retry } from "../utils/retry";
 
 interface PlanningAgentOptions extends BaseAgentOptions {
   emits: Emits;
@@ -374,7 +371,10 @@ ${toolsMessages.reduce((acc, cur) => {
       plan.status = "pending";
 
       try {
-        await this.executeTool(plan.name);
+        await retry(() => {
+          this.status = "pending";
+          return this.executeTool(plan.name);
+        }, this.requestInstance.maxRetries);
         if (this.status === "pending") {
           this.planIndex++;
           this.idb?.putContent({
@@ -404,246 +404,264 @@ ${toolsMessages.reduce((acc, cur) => {
   }
 
   private async executeTool(toolname: string) {
-    // 已前置校验过工具，所有tool一定存在
-    const tool = this.tools.find((tool) => {
-      return tool.name === toolname;
-    })!;
+    return new Promise<void>((resolve, reject) => {
+      (async () => {
+        // 已前置校验过工具，所有tool一定存在
+        const tool = this.tools.find((tool) => {
+          return tool.name === toolname;
+        })!;
 
-    const userFriendlyMessages = [
-      {
-        role: "tool",
-        status: "pending",
-        content: {
-          name: tool.name,
-          displayName: tool.displayName,
-        },
-      },
-    ] as Parameters<PlanningAgent["emitUserFriendlyMessages"]>[0]["messages"];
-
-    const messages: ChatMessages = [
-      {
-        role: "user",
-        content: `当前正在调用工具（${tool.name}，请根据系统提示词的工具描述、当前聚焦元素、和最近的用户需求提供输出。`,
-      },
-    ];
-
-    // 工具loading
-    this.emitUserFriendlyMessages({
-      messages: userFriendlyMessages,
-      type: "update",
-    });
-
-    /** 是否最后一项 */
-    const isLastPlan = this.planList.length - 1 === this.planIndex;
-    /** 工具提示词 */
-    const toolPrompt = getToolPrompt(tool, { attachments: this.attachments });
-
-    let toolResult:
-      | PlanError
-      | string
-      | ReturnType<typeof normalizeToolMessage>;
-
-    if (!toolPrompt) {
-      // 没有提示词，走本地调用，执行execute
-      const content = await this.toolExecute(tool);
-      if (content instanceof RxaiError) {
-        if (content instanceof ToolError) {
-          this.setErrorMessages([
-            ...messages.slice(1),
-            {
-              role: "assistant",
-              content: `工具调用错误：${content.message.displayContent}`,
-            },
-            {
-              role: "user",
-              content: "请重试",
-            },
-          ]);
-        }
-        return;
-      }
-      toolResult = normalizeToolMessage(content);
-
-      // 推送消息
-      messages.push({ role: "assistant", content: toolResult.llmContent });
-    } else {
-      let content = "";
-
-      const stream = tool.stream
-        ? (content: string, status: "start" | "ing" | "complete") => {
-            tool.stream!({
-              files: parseFileBlocks(content),
-              status,
-            });
-          }
-        : null;
-
-      // const stream = tool.stream
-      //   ? throttle((content, status) => {
-      //       tool.stream!({
-      //         files: parseFileBlocks(content),
-      //         status,
-      //       });
-      //     }, 1000)
-      //   : null;
-
-      stream?.("", "start");
-
-      const llmMessages = this.getLLMMessages({
-        start: [
+        const userFriendlyMessages = [
           {
-            role: "system",
-            content: getToolPrompt(tool, { attachments: this.attachments }),
+            role: "tool",
+            status: "pending",
+            content: {
+              name: tool.name,
+              displayName: tool.displayName,
+            },
           },
-        ],
-        end: messages,
-      });
+        ] as Parameters<
+          PlanningAgent["emitUserFriendlyMessages"]
+        >[0]["messages"];
 
-      const response = await this.request({
-        messages: llmMessages,
-        emits: this.getEmits({
-          write: (chunk) => {
-            if (tool.streamThoughts) {
-              this.events.emit("messageStream", chunk);
+        const messages: ChatMessages = [
+          {
+            role: "user",
+            content: `当前正在调用工具（${tool.name}，请根据系统提示词的工具描述、当前聚焦元素、和最近的用户需求提供输出。`,
+          },
+        ];
+
+        // 工具loading
+        this.emitUserFriendlyMessages({
+          messages: userFriendlyMessages,
+          type: "update",
+        });
+
+        /** 是否最后一项 */
+        const isLastPlan = this.planList.length - 1 === this.planIndex;
+        /** 工具提示词 */
+        const toolPrompt = getToolPrompt(tool, {
+          attachments: this.attachments,
+        });
+
+        let toolResult:
+          | PlanError
+          | string
+          | ReturnType<typeof normalizeToolMessage>;
+
+        if (!toolPrompt) {
+          // 没有提示词，走本地调用，执行execute
+          const content = await this.toolExecute(tool);
+          if (content instanceof RxaiError) {
+            if (content instanceof ToolError) {
+              this.setErrorMessages([
+                ...messages.slice(1),
+                {
+                  role: "assistant",
+                  content: `工具调用错误：${content.message.displayContent}`,
+                },
+                {
+                  role: "user",
+                  content: "请重试",
+                },
+              ]);
             }
+            return;
+          }
+          toolResult = normalizeToolMessage(content);
 
-            content += chunk;
-            stream?.(content, "ing");
-          },
-          complete: (content) => {
-            stream?.(content, "complete");
-          },
-        }),
-        aiRole: tool.aiRole,
-      });
-
-      if (response instanceof RxaiError) {
-        // this.setErrorMessages([
-        //   ...messages.slice(1),
-        //   {
-        //     role: "assistant",
-        //     content: `工具调用调用错误：${response.message}`,
-        //   },
-        //   {
-        //     role: "user",
-        //     content: "请重试",
-        //   },
-        // ]);
-        return;
-      }
-
-      // 解析文件
-      const files = parseFileBlocks(response);
-
-      // 执行工具
-      toolResult = await this.toolExecute(tool, {
-        files,
-        content: response,
-      });
-
-      if (toolResult instanceof RxaiError) {
-        if (toolResult instanceof ToolError) {
-          this.setErrorMessages([
-            ...messages.slice(1),
-            {
-              role: "assistant",
-              content: `工具调用错误：${toolResult.message.displayContent}`,
-            },
-            {
-              role: "user",
-              content: "请重试",
-            },
-          ]);
-        }
-        return;
-      }
-
-      toolResult = normalizeToolMessage(toolResult);
-
-      messages.push({ role: "assistant", content: toolResult.llmContent });
-    }
-
-    if (isLastPlan) {
-      // 最后一项
-      if (tool.lastAppendMessage) {
-        // 工具执行完成后需要默认再调用一次请求
-        const llmMessages = this.getLLMMessages({
-          start: [
-            {
-              role: "system",
-              content: getToolPrompt(tool, { attachments: this.attachments }),
-            },
-          ],
-          end: [
-            ...messages,
-            {
-              role: "user",
-              content: tool.lastAppendMessage,
-            },
-          ],
-        });
-
-        const response = await this.request({
-          messages: llmMessages,
-          emits: this.getEmits({
-            write: (chunk) => {
-              this.events.emit("messageStream", chunk);
-            },
-          }),
-          aiRole: tool.aiRole,
-        });
-
-        if (response instanceof RxaiError) {
-          // this.setErrorMessages([
-          //   ...messages.slice(1),
-          //   {
-          //     role: "assistant",
-          //     content: `工具调用调用错误：${response.message}`,
-          //   },
-          //   {
-          //     role: "user",
-          //     content: "请重试",
-          //   },
-          // ]);
-          return;
-        }
-
-        if (response) {
-          // 工具状态更新
-          userFriendlyMessages[0].status = "success";
           // 推送消息
-          userFriendlyMessages.push({
-            role: "assistant",
+          messages.push({ role: "assistant", content: toolResult.llmContent });
+        } else {
+          let content = "";
+
+          const stream = tool.stream
+            ? (content: string, status: "start" | "ing" | "complete") => {
+                tool.stream!({
+                  files: parseFileBlocks(content),
+                  status,
+                });
+              }
+            : null;
+
+          // const stream = tool.stream
+          //   ? throttle((content, status) => {
+          //       tool.stream!({
+          //         files: parseFileBlocks(content),
+          //         status,
+          //       });
+          //     }, 1000)
+          //   : null;
+
+          stream?.("", "start");
+
+          const llmMessages = this.getLLMMessages({
+            start: [
+              {
+                role: "system",
+                content: getToolPrompt(tool, { attachments: this.attachments }),
+              },
+            ],
+            end: messages,
+          });
+
+          const response = await this.request({
+            messages: llmMessages,
+            emits: this.getEmits({
+              write: (chunk) => {
+                if (tool.streamThoughts) {
+                  this.events.emit("messageStream", chunk);
+                }
+
+                content += chunk;
+                stream?.(content, "ing");
+              },
+              complete: (content) => {
+                stream?.(content, "complete");
+              },
+            }),
+            aiRole: tool.aiRole,
+          });
+
+          if (response instanceof RxaiError) {
+            // this.setErrorMessages([
+            //   ...messages.slice(1),
+            //   {
+            //     role: "assistant",
+            //     content: `工具调用调用错误：${response.message}`,
+            //   },
+            //   {
+            //     role: "user",
+            //     content: "请重试",
+            //   },
+            // ]);
+            reject();
+            return;
+          }
+
+          // 解析文件
+          const files = parseFileBlocks(response);
+
+          // 执行工具
+          toolResult = await this.toolExecute(tool, {
+            files,
             content: response,
           });
+
+          if (toolResult instanceof RxaiError) {
+            if (toolResult instanceof ToolError) {
+              this.setErrorMessages([
+                ...messages.slice(1),
+                {
+                  role: "assistant",
+                  content: `工具调用错误：${toolResult.message.displayContent}`,
+                },
+                {
+                  role: "user",
+                  content: "请重试",
+                },
+              ]);
+            } else {
+              reject();
+            }
+            return;
+          }
+
+          toolResult = normalizeToolMessage(toolResult);
+
+          messages.push({ role: "assistant", content: toolResult.llmContent });
         }
-      } else if (tool.streamThoughts) {
-        userFriendlyMessages.push({
-          role: "assistant",
-          content: toolResult.displayContent,
+
+        if (isLastPlan) {
+          // 最后一项
+          if (tool.lastAppendMessage) {
+            // 工具执行完成后需要默认再调用一次请求
+            const llmMessages = this.getLLMMessages({
+              start: [
+                {
+                  role: "system",
+                  content: getToolPrompt(tool, {
+                    attachments: this.attachments,
+                  }),
+                },
+              ],
+              end: [
+                ...messages,
+                {
+                  role: "user",
+                  content: tool.lastAppendMessage,
+                },
+              ],
+            });
+
+            const response = await this.request({
+              messages: llmMessages,
+              emits: this.getEmits({
+                write: (chunk) => {
+                  this.events.emit("messageStream", chunk);
+                },
+              }),
+              aiRole: tool.aiRole,
+            });
+
+            if (response instanceof RxaiError) {
+              // this.setErrorMessages([
+              //   ...messages.slice(1),
+              //   {
+              //     role: "assistant",
+              //     content: `工具调用调用错误：${response.message}`,
+              //   },
+              //   {
+              //     role: "user",
+              //     content: "请重试",
+              //   },
+              // ]);
+              reject();
+              return;
+            }
+
+            if (response) {
+              // 工具状态更新
+              userFriendlyMessages[0].status = "success";
+              // 推送消息
+              userFriendlyMessages.push({
+                role: "assistant",
+                content: response,
+              });
+            }
+          } else if (tool.streamThoughts) {
+            userFriendlyMessages.push({
+              role: "assistant",
+              content: toolResult.displayContent,
+            });
+          } else {
+            userFriendlyMessages.push({
+              role: "assistant",
+              content: toolResult.displayContent,
+            });
+          }
+
+          // 最后一个工具完成后，认为最终完成
+          this.emits.complete(toolResult.llmContent);
+        }
+
+        userFriendlyMessages[0].status = "success";
+
+        // 清除toolError
+        this.setPlanError(null);
+
+        // 完成请求，推送消息
+        this.pushMessages(messages);
+
+        this.emitUserFriendlyMessages({
+          messages: userFriendlyMessages,
+          type: "push",
         });
-      } else {
-        userFriendlyMessages.push({
-          role: "assistant",
-          content: toolResult.displayContent,
-        });
-      }
 
-      // 最后一个工具完成后，认为最终完成
-      this.emits.complete(toolResult.llmContent);
-    }
-
-    userFriendlyMessages[0].status = "success";
-
-    // 清除toolError
-    this.setPlanError(null);
-
-    // 完成请求，推送消息
-    this.pushMessages(messages);
-
-    this.emitUserFriendlyMessages({
-      messages: userFriendlyMessages,
-      type: "push",
+        resolve();
+      })()
+        .then(resolve)
+        .catch(reject);
     });
   }
 
