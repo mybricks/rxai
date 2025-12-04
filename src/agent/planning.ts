@@ -220,7 +220,14 @@ ${toolsMessages.reduce((acc, cur) => {
     if (!this.planList.length) {
       this.setLoading(true);
       // 没有规划，获取规划
-      await this.getPlanList();
+      await retry(() => {
+        this.emitUserFriendlyMessages({
+          messages: [],
+          type: "update",
+        });
+        this.setStatus("pending");
+        return this.getPlanList();
+      }, this.requestInstance.maxRetries);
     }
 
     // 规划结束立即结束loading，后续状态由工具决定
@@ -256,106 +263,113 @@ ${toolsMessages.reduce((acc, cur) => {
   }
 
   private async getPlanList() {
-    const messages = this.getLLMMessages({
-      start: [
-        {
-          role: "system",
-          content: getSystemPrompt({
-            title: this.system.title,
-            tools: this.tools,
-          }),
-        },
-      ],
-    });
+    return new Promise<void>((resolve, reject) => {
+      (async () => {
+        const messages = this.getLLMMessages({
+          start: [
+            {
+              role: "system",
+              content: getSystemPrompt({
+                title: this.system.title,
+                tools: this.tools,
+              }),
+            },
+          ],
+        });
 
-    const response = await this.request({
-      messages,
-      emits: this.getEmits({}),
-    });
+        const response = await this.request({
+          messages,
+          emits: this.getEmits({}),
+        });
 
-    if (response instanceof RxaiError) {
-      // this.setErrorMessages([
-      //   {
-      //     role: "assistant",
-      //     content: `规划接口调用错误：${response.message}`,
-      //   },
-      //   {
-      //     role: "user",
-      //     content: "请重试",
-      //   },
-      // ]);
-      return;
-    }
-
-    if (response) {
-      // 解析规划内容
-      const match = response!.match(/```bash\s*\n(.+?)\n/);
-
-      if (match?.[1]) {
-        // 正常返回计划列表，执行act
-        // TODO: 解析失败的重试
-        const planList = match[1]
-          .split("&&")
-          .filter((command) => {
-            return /^node\s+\S+/.test(command.trim());
-          })
-          .map((command) => {
-            return command.trim().replace(/^node\s+/, "");
-          });
-
-        // 工具检查
-        const { valid, validTools, invalidTools } =
-          this.validatePlanListTools(planList);
-
-        if (!valid) {
-          const content = `规划错误，使用了不存在的工具(${invalidTools.join(", ")})`;
-          this.setError(
-            new ToolError({
-              displayContent: content,
-              llmContent: content,
-            }),
-          );
+        if (response instanceof RxaiError) {
+          // this.setErrorMessages([
+          //   {
+          //     role: "assistant",
+          //     content: `规划接口调用错误：${response.message}`,
+          //   },
+          //   {
+          //     role: "user",
+          //     content: "请重试",
+          //   },
+          // ]);
+          reject();
           return;
         }
 
-        this.setPlanList(
-          validTools.map((plan: string) => {
-            return {
-              name: plan,
-              status: null,
-            };
-          }),
-        );
-        this.pushMessages([
-          {
-            role: "assistant",
-            content: response,
-          },
-        ]);
-        return true;
-      } else {
-        // 没有返回计划列表，结束
-        this.emits.complete(response);
-        this.pushMessages([
-          {
-            role: "assistant",
-            content: response,
-          },
-        ]);
+        if (response) {
+          // 解析规划内容
+          const match = response!.match(/```bash\s*\n(.+?)\n/);
 
-        this.emitUserFriendlyMessages({
-          messages: [
-            {
-              role: "assistant",
-              content: response,
-            },
-          ],
-          type: "push",
-        });
-        this.setStatus("success");
-      }
-    }
-    this.setPlanError(null);
+          if (match?.[1]) {
+            // 正常返回计划列表，执行act
+            // TODO: 解析失败的重试
+            const planList = match[1]
+              .split("&&")
+              .filter((command) => {
+                return /^node\s+\S+/.test(command.trim());
+              })
+              .map((command) => {
+                return command.trim().replace(/^node\s+/, "");
+              });
+
+            // 工具检查
+            const { valid, validTools, invalidTools } =
+              this.validatePlanListTools(planList);
+
+            if (!valid) {
+              const content = `规划错误，使用了不存在的工具(${invalidTools.join(", ")})`;
+              throw new ToolError({
+                displayContent: content,
+                llmContent: content,
+              });
+            }
+
+            this.setPlanList(
+              validTools.map((plan: string) => {
+                return {
+                  name: plan,
+                  status: null,
+                };
+              }),
+            );
+            this.pushMessages([
+              {
+                role: "assistant",
+                content: response,
+              },
+            ]);
+          } else {
+            // 没有返回计划列表，结束
+            this.emits.complete(response);
+            this.pushMessages([
+              {
+                role: "assistant",
+                content: response,
+              },
+            ]);
+
+            this.emitUserFriendlyMessages({
+              messages: [
+                {
+                  role: "assistant",
+                  content: response,
+                },
+              ],
+              type: "push",
+            });
+            this.setStatus("success");
+          }
+        }
+        this.setPlanError(null);
+        resolve();
+      })().catch((content) => {
+        if (content instanceof ToolError) {
+          this.setError(content);
+        }
+        reject();
+      });
+    });
   }
 
   private async executePlanList() {
@@ -372,7 +386,7 @@ ${toolsMessages.reduce((acc, cur) => {
 
       try {
         await retry(() => {
-          this.status = "pending";
+          this.setStatus("pending");
           return this.executeTool(plan.name);
         }, this.requestInstance.maxRetries);
         if (this.status === "pending") {
@@ -752,6 +766,10 @@ ${toolsMessages.reduce((acc, cur) => {
   }
 
   async retry() {
+    this.emitUserFriendlyMessages({
+      messages: [],
+      type: "update",
+    });
     this.setStatus("pending");
     this.start();
   }
