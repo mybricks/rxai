@@ -272,6 +272,7 @@ ${toolsMessages.reduce((acc, cur) => {
               content: getSystemPrompt({
                 title: this.system.title,
                 tools: this.tools,
+                prompt: this.system.prompt,
               }),
             },
           ],

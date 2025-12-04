@@ -1,4 +1,4 @@
-import { BaseAgent } from "../agent/base";
+import { BaseAgent, BaseAgentOptions } from "../agent/base";
 import { PlanningAgent } from "../agent/planning";
 import { Request, RequestOptions } from "../request/request";
 import { Events } from "../utils/events";
@@ -23,6 +23,7 @@ interface RequestParams {
 }
 
 interface RxaiOptions {
+  system?: BaseAgentOptions["system"];
   request: RequestOptions;
   enableLog?: boolean;
   idb?: IDB;
