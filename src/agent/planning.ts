@@ -272,6 +272,7 @@ ${toolsMessages.reduce((acc, cur) => {
               content: getSystemPrompt({
                 title: this.system.title,
                 tools: this.tools,
+                prompt: this.system.prompt,
               }),
             },
           ],
@@ -299,19 +300,54 @@ ${toolsMessages.reduce((acc, cur) => {
 
         if (response) {
           // 解析规划内容
-          const match = response!.match(/```bash\s*\n(.+?)\n/);
+          // const match = response!.match(/```bash\s*\n(.+?)\n/);
 
-          if (match?.[1]) {
-            // 正常返回计划列表，执行act
-            // TODO: 解析失败的重试
-            const planList = match[1]
-              .split("&&")
-              .filter((command) => {
-                return /^node\s+\S+/.test(command.trim());
-              })
-              .map((command) => {
-                return command.trim().replace(/^node\s+/, "");
-              });
+          // if (match?.[1]) {
+          //   // 正常返回计划列表，执行act
+          //   // TODO: 解析失败的重试
+          //   const planList = match[1]
+          //     .split("&&")
+          //     .filter((command) => {
+          //       return /^node\s+\S+/.test(command.trim());
+          //     })
+          //     .map((command) => {
+          //       return command.trim().replace(/^node\s+/, "");
+          //     });
+
+          //   // 工具检查
+          //   const { valid, validTools, invalidTools } =
+          //     this.validatePlanListTools(planList);
+
+          //   if (!valid) {
+          //     const content = `规划错误，使用了不存在的工具(${invalidTools.join(", ")})`;
+          //     throw new ToolError({
+          //       displayContent: content,
+          //       llmContent: content,
+          //     });
+          //   }
+
+          //   this.setPlanList(
+          //     validTools.map((plan: string) => {
+          //       return {
+          //         name: plan,
+          //         status: null,
+          //       };
+          //     }),
+          //   );
+          //   this.pushMessages([
+          //     {
+          //       role: "assistant",
+          //       content: response,
+          //     },
+          //   ]);
+          // }
+
+          const bashCommands = parseBashCommands(response);
+          console.log("[bashCommands]", bashCommands);
+          if (bashCommands.length) {
+            const planList = bashCommands.map((command) => {
+              return command[1];
+            });
 
             // 工具检查
             const { valid, validTools, invalidTools } =
@@ -903,3 +939,18 @@ ${toolsMessages.reduce((acc, cur) => {
 }
 
 export { PlanningAgent };
+
+function parseBashCommands(string: string) {
+  const bashCodeRegex = /```\s*bash([\s\S]*?)```/;
+  const matchResult = string.match(bashCodeRegex);
+
+  if (!matchResult) return [];
+
+  const bashContent = matchResult[1].trim();
+  const subCommands = bashContent.split("&&").map((cmd) => cmd.trim());
+  const commandArray = subCommands.map((cmd) =>
+    cmd.split(/\s+/).filter(Boolean),
+  );
+
+  return commandArray;
+}
