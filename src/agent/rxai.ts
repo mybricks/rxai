@@ -14,7 +14,7 @@ interface RequestParams {
   emits: Emits;
   key: string;
   attachments?: Attachment[];
-  presetMessages?: ChatMessages;
+  presetMessages?: ChatMessages | (() => ChatMessages);
   presetHistoryMessages?: ChatMessages;
   tools: Tool[];
   planList?: string[];

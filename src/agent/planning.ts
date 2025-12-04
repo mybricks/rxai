@@ -17,7 +17,7 @@ interface PlanningAgentOptions extends BaseAgentOptions {
   message: string;
   attachments?: Attachment[];
   historyMessages: ChatMessages;
-  presetMessages: ChatMessages;
+  presetMessages: ChatMessages | (() => ChatMessages);
   presetHistoryMessages: ChatMessages;
   planList?: string[];
   extension?: unknown;
@@ -53,7 +53,7 @@ class PlanningAgent extends BaseAgent {
   /** 历史记录 */
   private historyMessages: ChatMessages;
   /** 预设消息，调用方提前注入，仅用于当前plan调用 */
-  private presetMessages: ChatMessages;
+  private presetMessages: ChatMessages | (() => ChatMessages);
   /** TODO: 预设历史消息，调用方提前注入，仅存在历史记录 */
   private presetHistoryMessages: ChatMessages;
   /** 用户友好消息列表 */
@@ -250,7 +250,9 @@ ${toolsMessages.reduce((acc, cur) => {
     const { start, end } = params;
     const messages = [
       ...this.historyMessages,
-      ...this.presetMessages,
+      ...(typeof this.presetMessages === "function"
+        ? this.presetMessages()
+        : this.presetMessages),
       ...this.messages,
     ];
     if (start) {
@@ -926,7 +928,10 @@ ${toolsMessages.reduce((acc, cur) => {
       attachments: this.attachments,
       message: this.message,
       presetHistoryMessages: this.presetHistoryMessages,
-      presetMessages: this.presetMessages,
+      presetMessages:
+        typeof this.presetMessages === "function"
+          ? this.presetMessages()
+          : this.presetMessages,
     };
   }
 
