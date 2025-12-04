@@ -32,6 +32,7 @@ interface Tool {
   execute: (params?: {
     files: Files;
     content: string;
+    params?: { [key: string]: string };
   }) => string | { displayContent: string; llmContent: string };
   stream?: (params: {
     files: Files;

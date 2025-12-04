@@ -28,6 +28,9 @@ interface PlanningAgentOptions extends BaseAgentOptions {
 type PlanList = {
   name: string;
   status: "pending" | "success" | "error" | null;
+  params: {
+    [key: string]: string;
+  };
 }[];
 
 type PlanStatus = "pending" | "success" | "error" | "aborted";
@@ -91,6 +94,7 @@ class PlanningAgent extends BaseAgent {
         return {
           name: plan,
           status: null,
+          params: {},
         };
       }) || [],
     );
@@ -346,7 +350,10 @@ ${toolsMessages.reduce((acc, cur) => {
           console.log("[bashCommands]", bashCommands);
           if (bashCommands.length) {
             const planList = bashCommands.map((command) => {
-              return command[1];
+              return {
+                name: command.name,
+                params: command.params,
+              };
             });
 
             // 工具检查
@@ -362,9 +369,9 @@ ${toolsMessages.reduce((acc, cur) => {
             }
 
             this.setPlanList(
-              validTools.map((plan: string) => {
+              validTools.map((validTool) => {
                 return {
-                  name: plan,
+                  ...validTool,
                   status: null,
                 };
               }),
@@ -423,7 +430,7 @@ ${toolsMessages.reduce((acc, cur) => {
       try {
         await retry(() => {
           this.setStatus("pending");
-          return this.executeTool(plan.name);
+          return this.executeTool(plan);
         }, this.requestInstance.maxRetries);
         if (this.status === "pending") {
           this.planIndex++;
@@ -453,12 +460,12 @@ ${toolsMessages.reduce((acc, cur) => {
     return;
   }
 
-  private async executeTool(toolname: string) {
+  private async executeTool(plan: PlanList[number]) {
     return new Promise<void>((resolve, reject) => {
       (async () => {
         // 已前置校验过工具，所有tool一定存在
         const tool = this.tools.find((tool) => {
-          return tool.name === toolname;
+          return tool.name === plan.name;
         })!;
 
         const userFriendlyMessages = [
@@ -501,7 +508,11 @@ ${toolsMessages.reduce((acc, cur) => {
 
         if (!toolPrompt) {
           // 没有提示词，走本地调用，执行execute
-          const content = await this.toolExecute(tool);
+          const content = await this.toolExecute(tool, {
+            params: plan.params,
+            files: [],
+            content: "",
+          });
           if (content instanceof RxaiError) {
             if (content instanceof ToolError) {
               this.setErrorMessages([
@@ -596,6 +607,7 @@ ${toolsMessages.reduce((acc, cur) => {
           toolResult = await this.toolExecute(tool, {
             files,
             content: response,
+            params: plan.params,
           });
 
           if (toolResult instanceof RxaiError) {
@@ -815,16 +827,43 @@ ${toolsMessages.reduce((acc, cur) => {
    * @param planList 工具名称列表
    * @returns 检查结果，valid为true时表示所有工具都存在
    */
-  private validatePlanListTools(planList: string[]): {
+  private validatePlanListTools(
+    planList: {
+      name: string;
+      params: {
+        [key: string]: string;
+      };
+    }[],
+  ): {
     valid: boolean;
-    validTools: string[];
-    invalidTools: string[];
+    validTools: {
+      name: string;
+      params: {
+        [key: string]: string;
+      };
+    }[];
+    invalidTools: {
+      name: string;
+      params: {
+        [key: string]: string;
+      };
+    }[];
   } {
-    const validTools: string[] = [];
-    const invalidTools: string[] = [];
+    const validTools: {
+      name: string;
+      params: {
+        [key: string]: string;
+      };
+    }[] = [];
+    const invalidTools: {
+      name: string;
+      params: {
+        [key: string]: string;
+      };
+    }[] = [];
 
     for (const plan of planList) {
-      const tool = this.tools.find((tool) => tool.name === plan);
+      const tool = this.tools.find((tool) => tool.name === plan.name);
       if (tool) {
         validTools.push(plan);
       } else {
@@ -952,5 +991,31 @@ function parseBashCommands(string: string) {
     cmd.split(/\s+/).filter(Boolean),
   );
 
-  return commandArray;
+  const result: {
+    name: string;
+    params: {
+      [key: string]: string;
+    };
+  }[] = [];
+
+  commandArray.forEach((command) => {
+    const [node, filename, ...args] = command;
+    const params: { [key: string]: string } = {};
+    let key = "";
+    args.forEach((arg) => {
+      if (arg.startsWith("-")) {
+        key = arg.replace(/^-/, "");
+      } else if (key) {
+        params[key] = arg;
+      }
+    });
+
+    result.push({
+      name: filename,
+      params,
+    });
+  });
+
+  console.log("[commandArray]", commandArray);
+  return result;
 }
