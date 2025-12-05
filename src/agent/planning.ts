@@ -80,6 +80,10 @@ class PlanningAgent extends BaseAgent {
 
   idb?: IDB;
 
+  defaultPlanList: boolean = false;
+
+  fromIDB: boolean = false;
+
   constructor(options: PlanningAgentOptions) {
     super(options);
     this.tools = options.tools;
@@ -101,6 +105,10 @@ class PlanningAgent extends BaseAgent {
     this.extension = options.extension;
     this.idb = options.idb;
     this.uuid = options.uuid || uuid();
+
+    if (options.planList?.length) {
+      this.defaultPlanList = true;
+    }
   }
 
   getMessages() {
@@ -129,6 +137,17 @@ ${toolsMessages.reduce((acc, cur) => {
   }
 
   async run() {
+    if (!this.defaultPlanList) {
+      this.planList = [];
+    }
+    this.planIndex = 0;
+    this.userFriendlyMessages = [];
+    this.loading = true;
+    this.status = "pending";
+    this.error = null;
+    this.errorMessages = [];
+    this.messages = [];
+
     // 拼user消息
     const content = this.attachments?.length
       ? [
@@ -817,12 +836,16 @@ ${toolsMessages.reduce((acc, cur) => {
   }
 
   async retry() {
-    this.emitUserFriendlyMessages({
-      messages: [],
-      type: "update",
-    });
-    this.setStatus("pending");
-    this.start();
+    if (this.error?.message === "rxai_retry") {
+      this.run();
+    } else {
+      this.emitUserFriendlyMessages({
+        messages: [],
+        type: "update",
+      });
+      this.setStatus("pending");
+      this.start();
+    }
   }
 
   /**
@@ -937,6 +960,7 @@ ${toolsMessages.reduce((acc, cur) => {
   }
 
   recover(params: any) {
+    this.fromIDB = true;
     params.forEach(({ type, content }: any) => {
       if (type === "error") {
         if (content) {
