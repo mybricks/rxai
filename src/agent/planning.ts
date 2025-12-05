@@ -644,9 +644,10 @@ ${toolsMessages.reduce((acc, cur) => {
               start: [
                 {
                   role: "system",
-                  content: getToolPrompt(tool, {
-                    attachments: this.attachments,
-                  }),
+                  content:
+                    getToolPrompt(tool, {
+                      attachments: this.attachments,
+                    }) || "请根据最新消息，回答用户问题",
                 },
               ],
               end: [
@@ -1009,9 +1010,12 @@ function parseBashCommands(string: string) {
     let key = "";
     args.forEach((arg) => {
       if (arg.startsWith("-")) {
-        key = arg.replace(/^-/, "");
+        // 支持 -v 或 --option 格式，移除前面的 - 或 --
+        key = arg.replace(/^--?/, "");
       } else if (key) {
+        // 当前面有key时，当前值作为参数值
         params[key] = arg;
+        key = ""; // 重置key，准备接收下一个参数
       }
     });
 
