@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/ban-ts-comment */
 import { getSystemPrompt } from "../prompt/planning";
 import { BaseAgent, BaseAgentOptions } from "./base";
 import { parseFileBlocks } from "../tool/util";
@@ -10,6 +11,7 @@ import { uuid } from "../utils/uuid";
 import { RxaiError } from "../error/base";
 import { RequestError } from "../error/requestError";
 import { retry } from "../utils/retry";
+import { RetryError } from "../error/retryError";
 
 interface PlanningAgentOptions extends BaseAgentOptions {
   emits: Emits;
@@ -35,7 +37,7 @@ type PlanList = {
 
 type PlanStatus = "pending" | "success" | "error" | "aborted";
 
-type PlanError = ToolError | RequestError | null;
+type PlanError = ToolError | RequestError | RetryError | null;
 
 /**
  * 分析计划
@@ -836,7 +838,7 @@ ${toolsMessages.reduce((acc, cur) => {
   }
 
   async retry() {
-    if (this.error?.message === "rxai_retry") {
+    if (this.error?.type === "retry") {
       this.run();
     } else {
       this.emitUserFriendlyMessages({
@@ -964,15 +966,18 @@ ${toolsMessages.reduce((acc, cur) => {
     params.forEach(({ type, content }: any) => {
       if (type === "error") {
         if (content) {
-          // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-          // @ts-ignore
-          this[type] =
-            content.type === "tool"
-              ? new ToolError(content.message)
-              : new RequestError(content.message);
+          if (content.type === "tool") {
+            // @ts-ignore
+            this[type] = new ToolError(content.message);
+          } else if (content.type === "request") {
+            // @ts-ignore
+            this[type] = new RequestError(content.message);
+          } else if (content.type === "retry") {
+            // @ts-ignore
+            this[type] = new RetryError(content.message);
+          }
         }
       } else {
-        // eslint-disable-next-line @typescript-eslint/ban-ts-comment
         // @ts-ignore
         this[type] = content;
       }
@@ -989,12 +994,17 @@ ${toolsMessages.reduce((acc, cur) => {
     const userFriendlyMessages = [...this.userFriendlyMessages];
 
     if (this.error) {
+      let message = "";
+      if (this.error instanceof ToolError) {
+        message = this.error.message.displayContent;
+      } else if (this.error instanceof RequestError) {
+        message = this.error.message;
+      } else if (this.error instanceof RetryError) {
+        message = this.error.message;
+      }
       userFriendlyMessages.push({
         role: "error",
-        content:
-          this.error instanceof RequestError
-            ? this.error.message
-            : this.error.message.displayContent,
+        content: message,
       });
     } else if (this.status === "aborted") {
       userFriendlyMessages.push({

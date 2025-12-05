@@ -1,9 +1,9 @@
 import { RxaiError } from "./base";
 
 class RetryError extends RxaiError<string> {
-  constructor(error: unknown) {
+  constructor(error: string) {
     super({
-      error: "rxai_retry",
+      error,
       type: "retry",
     });
   }
