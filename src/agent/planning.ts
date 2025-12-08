@@ -791,7 +791,7 @@ class PlanningAgent extends BaseAgent {
 
   /** TODO: 获取当前plan的总结信息 */
   getMessages() {
-    if (this.loading || this.status === "pending") {
+    if (this.loading || this.status === "pending" || this.messages.length) {
       return [];
     }
 
