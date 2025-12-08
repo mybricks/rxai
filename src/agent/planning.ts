@@ -592,15 +592,6 @@ class PlanningAgent extends BaseAgent {
     const { options } = this;
     const { start, end } = params;
 
-    console.log(
-      "getLLMMessages",
-      options.historyMessages,
-      typeof options.presetMessages === "function"
-        ? options.presetMessages()
-        : options.presetMessages,
-      this.getUserMessage(),
-    );
-
     const messages = [
       ...options.historyMessages,
       ...(typeof options.presetMessages === "function"
