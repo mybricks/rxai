@@ -27,7 +27,7 @@ class Events<TMap extends object> {
   on<K extends keyof TMap>(
     key: K,
     handle: Handle<TMap[K]>,
-    immediate: boolean = false,
+    immediate: boolean = true,
   ) {
     const event = this.getEvent(key);
     if (immediate && event.cache !== EMPTY_CACHE) {

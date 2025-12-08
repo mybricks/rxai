@@ -1,21 +1,12 @@
-import { RxaiError } from "./base";
+import { RxaiError, RxaiErrorMessage, normalizeErrorMessage } from "./base";
 
-class RequestError extends RxaiError<string> {
-  constructor(error: unknown) {
+class RequestError extends RxaiError {
+  constructor(error: string | RxaiErrorMessage) {
     super({
-      error: transformRequestErrorMessage(error),
+      error: normalizeErrorMessage(error),
       type: "request",
     });
   }
 }
-
-const transformRequestErrorMessage = (error: unknown) => {
-  if (error instanceof Error) {
-    return error.message;
-  } else if (typeof error === "string") {
-    return error;
-  }
-  return "接口调用错误";
-};
 
 export { RequestError };

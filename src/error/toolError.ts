@@ -5,7 +5,7 @@ interface ToolMessage {
   llmContent: string;
 }
 
-class ToolError extends RxaiError<ToolMessage> {
+class ToolError extends RxaiError {
   constructor(error: ToolMessage) {
     super({
       error,
@@ -14,30 +14,4 @@ class ToolError extends RxaiError<ToolMessage> {
   }
 }
 
-const normalizeToolMessage = (message: string | ToolMessage): ToolMessage => {
-  if (typeof message === "string") {
-    return {
-      displayContent: message,
-      llmContent: message,
-    };
-  }
-
-  return message;
-};
-
-const normalizeToolError = (error: unknown, message: string = "错误") => {
-  console.error("[Rxai - error]", error);
-  if (error instanceof ToolError) {
-    return error;
-  } else if (error instanceof Error) {
-    const message = error.message;
-    return new ToolError({ displayContent: message, llmContent: message });
-  } else {
-    return new ToolError({
-      displayContent: message,
-      llmContent: message,
-    });
-  }
-};
-
-export { ToolError, normalizeToolMessage, normalizeToolError };
+export { ToolError };

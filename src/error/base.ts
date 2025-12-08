@@ -1,14 +1,18 @@
-interface RxaiErrorOptions<E> {
-  error: E;
+interface RxaiErrorMessage {
+  displayContent: string;
+  llmContent: string;
+}
+
+interface RxaiErrorOptions {
+  error: RxaiErrorMessage;
   type: string;
 }
 
-class RxaiError<E> {
-  protected error: E;
-
+class RxaiError {
+  protected error: RxaiErrorOptions["error"];
   type: string;
 
-  constructor(options: RxaiErrorOptions<E>) {
+  constructor(options: RxaiErrorOptions) {
     this.error = options.error;
     this.type = options.type;
   }
@@ -18,4 +22,17 @@ class RxaiError<E> {
   }
 }
 
-export { RxaiError };
+const normalizeErrorMessage = (
+  error: string | RxaiErrorOptions["error"],
+): RxaiErrorOptions["error"] => {
+  if (typeof error === "string") {
+    return {
+      displayContent: error,
+      llmContent: error,
+    };
+  }
+
+  return error;
+};
+
+export { RxaiError, normalizeErrorMessage, RxaiErrorMessage };

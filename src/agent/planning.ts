@@ -6,7 +6,7 @@ import { getToolPrompt } from "../prompt/tool";
 import { Events } from "../utils/events";
 import { Request } from "../request/request";
 import { IDB } from "../utils/idb";
-import { ToolError, normalizeToolMessage } from "../error/toolError";
+import { ToolError } from "../error/toolError";
 import { uuid } from "../utils/uuid";
 import { RxaiError } from "../error/base";
 import { RequestError } from "../error/requestError";
@@ -27,255 +27,617 @@ interface PlanningAgentOptions extends BaseAgentOptions {
   uuid?: string;
 }
 
-type PlanList = {
-  name: string;
-  status: "pending" | "success" | "error" | null;
-  params: {
-    [key: string]: string;
-  };
-}[];
-
 type PlanStatus = "pending" | "success" | "error" | "aborted";
 
-type PlanError = ToolError | RequestError | RetryError | null;
+/** 没有response */
+const CATCH_EMPTY = Symbol("CATCH_EMPTY");
+
+type PlanError = ToolError | RequestError | null;
+
+type CommandStatus = "pending" | "success" | "error" | null;
+
+type EventsKV = {
+  loading: boolean;
+  userFriendlyMessages: any[];
+  streamMessage: string;
+  userMessage: ReturnType<PlanningAgent["getUserMessage"]>;
+  startTime: number;
+  summary: string;
+  commands: PlanningAgent["commands"];
+  error: string;
+};
 
 /**
  * 分析计划
  * 执行计划
  */
 class PlanningAgent extends BaseAgent {
-  uuid: string;
-  planList: PlanList = [];
-  planIndex: number = 0;
-  private tools: Tool[];
-  private emits: Emits;
-  private message: string;
-  /** 附件 */
-  attachments?: Attachment[];
-  /** 历史记录 */
-  private historyMessages: ChatMessages;
-  /** 预设消息，调用方提前注入，仅用于当前plan调用 */
-  private presetMessages: ChatMessages | (() => ChatMessages);
-  /** TODO: 预设历史消息，调用方提前注入，仅存在历史记录 */
-  private presetHistoryMessages: ChatMessages;
-  /** 用户友好消息列表 */
-  private userFriendlyMessages: any[] = [];
+  private startTime: number = 0;
+  private endTime: number = 0;
+  private llmContent: string = "";
+  private loading: boolean = false;
+  private commands: {
+    startTime: number;
+    endTime: number;
+    argv: [
+      string,
+      string,
+      {
+        [key: string]: string;
+      },
+    ];
+    status: CommandStatus;
+    tool: {
+      name: string;
+      displayName: string;
+    };
+    content: {
+      llm: string;
+      display: string;
+      llmLast: string;
+      response: string;
+    };
+  }[] = [];
 
-  extension?: unknown;
+  private defaultPlanList = false;
 
-  events = new Events<{
-    loading: boolean;
-    userFriendlyMessages: any[];
-    messageStream: string;
-  }>();
-
-  // TODO
-  loading = true;
-
-  /** 状态 */
-  status: PlanStatus = "pending";
-
-  error: PlanError = null;
-
-  /** 未完成的接口请求 */
-  errorMessages: ChatMessages = [];
-
-  idb?: IDB;
-
-  defaultPlanList: boolean = false;
-
-  fromIDB: boolean = false;
-
-  constructor(options: PlanningAgentOptions) {
+  constructor(private options: PlanningAgentOptions) {
     super(options);
-    this.tools = options.tools;
-    this.emits = options.emits;
-    this.message = options.message;
-    this.attachments = options.attachments;
-    this.historyMessages = options.historyMessages;
-    this.presetMessages = options.presetMessages;
-    this.presetHistoryMessages = options.presetHistoryMessages;
-    this.setPlanList(
-      options.planList?.map((plan) => {
-        return {
-          name: plan,
-          status: null,
-          params: {},
-        };
-      }) || [],
-    );
-    this.extension = options.extension;
-    this.idb = options.idb;
+    // 设置UUID
     this.uuid = options.uuid || uuid();
+    if (options.planList) {
+      // 配置默认的规划列表
+      const time = new Date().getTime();
+      const llmContent =
+        "```bash" +
+        `\n${options.planList.reduce((pre, cur) => {
+          return (pre ? pre + " && " : pre) + `node ${cur}`;
+        }, "")}` +
+        "\n```";
 
-    if (options.planList?.length) {
+      this.setStartTime(time);
+      this.setEndTime(time);
+      this.setLlmContent(llmContent);
+      this.setLoading(false);
+      this.setCommands(
+        parseBashCommands(llmContent).map((argv) => {
+          return {
+            startTime: 0,
+            endTime: 0,
+            argv,
+            status: null,
+            tool: {
+              name: argv[1],
+              displayName: argv[1],
+            },
+            content: {
+              llm: "",
+              display: "",
+              llmLast: "",
+              response: "",
+            },
+          };
+        }),
+        false,
+      );
+
       this.defaultPlanList = true;
     }
+    // 设置userMessage
+    this.events.emit("userMessage", this.getUserMessage());
   }
 
-  getMessages() {
-    if (this.loading || this.status === "pending") {
-      return [];
-    }
+  /** 随机ID，保证唯一性 */
+  private uuid: string;
 
-    const userRequireMessage = this.messages[0];
-    const toolsMessages = this.messages.slice(1);
+  /** 事件 */
+  events = new Events<EventsKV>();
 
-    const summaryMessage =
-      toolsMessages.length > 1
-        ? {
-            role: "user",
-            content: `<对话日志>
-${toolsMessages.reduce((acc, cur) => {
-  return acc + "\n\n" + cur.content;
-}, "")}
-</对话日志>`,
-          }
-        : {
-            role: "assistant",
-            content: toolsMessages[0]?.content,
-          };
-    return [...this.presetHistoryMessages, userRequireMessage, summaryMessage];
-  }
+  /** 整体运行状态 */
+  private status: PlanStatus = "pending";
 
+  /** error信息 */
+  private error: PlanError = null;
+
+  enableRetry: boolean = true;
+
+  /** 开始执行 */
   async run() {
-    if (!this.defaultPlanList) {
-      this.planList = [];
-    }
-    this.planIndex = 0;
-    this.userFriendlyMessages = [];
-    this.loading = true;
-    this.status = "pending";
-    this.error = null;
-    this.errorMessages = [];
-    this.messages = [];
+    // 记录开始时间
+    this.setStartTime(new Date().getTime());
 
-    // 拼user消息
-    const content = this.attachments?.length
-      ? [
-          {
-            type: "text",
-            text: this.message,
-          },
-          ...this.attachments
-            .filter((attachement) => {
-              return attachement.type === "image";
-            })
-            .map((attachement) => {
-              return {
-                type: "image_url",
-                image_url: {
-                  url: attachement.content,
-                },
-              };
-            }),
-        ]
-      : this.message;
-    this.pushMessages([
-      {
-        role: "user",
-        content,
-      },
-    ]);
-
-    // 推送用户友好消息
-    this.emitUserFriendlyMessages({
-      messages: [
-        {
-          role: "user",
-          content,
-        },
-      ],
-      type: "push",
-    });
-
-    if (this.planList.length) {
-      // 外部定义的规划流程
-      this.pushMessages([
-        {
-          role: "assistant",
-          content: `已规划出实现需求所需的完整步骤，将按顺序执行以下工具，${this.planList.map((t) => t.name).join("、")}`,
-        },
-      ]);
-    }
-
-    this.start();
-  }
-
-  private pushMessages(messages: ChatMessages) {
-    // 推送消息
-    this.messages.push(...messages);
-
-    this.idb?.putContent({
-      id: this.uuid,
-      type: "messages",
-      content: this.messages,
-    });
-  }
-
-  private setLoading(loading: boolean) {
-    this.loading = loading;
-    this.events.emit("loading", loading);
-    this.idb?.putContent({
-      id: this.uuid,
-      type: "loading",
-      content: loading,
-    });
-  }
-
-  private setErrorMessages(errorMessages: ChatMessages) {
-    this.errorMessages = errorMessages;
-    this.idb?.putContent({
-      id: this.uuid,
-      type: "errorMessages",
-      content: this.errorMessages,
-    });
-  }
-
-  private setPlanList(planList: PlanList) {
-    this.planList = planList;
-    this.idb?.putContent({
-      id: this.uuid,
-      type: "planList",
-      content: planList,
-    });
+    await this.start();
   }
 
   private async start() {
-    if (!this.planList.length) {
+    this.setStatus("pending");
+
+    if (!this.options.planList) {
+      // 没有配置默认planList，需要规划
       this.setLoading(true);
-      // 没有规划，获取规划
-      await retry(() => {
-        this.emitUserFriendlyMessages({
-          messages: [],
-          type: "update",
-        });
-        this.setStatus("pending");
-        return this.getPlanList();
-      }, this.requestInstance.maxRetries);
+
+      await this.tryCatch(
+        () =>
+          retry(
+            () => {
+              return this.planning();
+            },
+            this.options.requestInstance.maxRetries,
+            (error) => {
+              return error instanceof RequestError;
+            },
+          ),
+        true,
+      );
+
+      this.setLoading(false);
     }
 
-    // 规划结束立即结束loading，后续状态由工具决定
-    this.setLoading(false);
-    // 执行工具
-    await this.executePlanList();
+    await this.executeCommands();
 
+    // 执行结束，调用emits回调通知调用方
     if (this.status === "success") {
-      this.emits.complete("");
+      this.options.emits.complete("");
     } else if (this.status === "error") {
-      this.emits.error("");
+      this.options.emits.error("");
     }
   }
 
+  /** 设置需缓存的值 */
+  private setStartTime(startTime: PlanningAgent["startTime"]) {
+    this.startTime = startTime;
+    this.idbPubContent("startTime", startTime);
+  }
+  private setEndTime(endTime: PlanningAgent["endTime"]) {
+    this.endTime = endTime;
+    this.idbPubContent("endTime", endTime);
+  }
+  private setLlmContent(llmContent: PlanningAgent["llmContent"]) {
+    this.llmContent = llmContent;
+    this.idbPubContent("llmContent", llmContent);
+  }
+  private setLoading(loading: PlanningAgent["loading"]) {
+    this.loading = loading;
+    this.events.emit("loading", loading);
+  }
+  private setCommands(commands: PlanningAgent["commands"], sync: boolean) {
+    this.commands = commands;
+    this.events.emit("commands", commands);
+    if (sync) {
+      this.idbPubContent("commands", commands);
+    }
+  }
+  private idbPubContent(type: string, content: any) {
+    console.log("this.uuid", this.uuid, type, content);
+    this.options.idb?.putContent({
+      id: this.uuid,
+      type,
+      content,
+    });
+  }
+
+  /** 规划 */
+  private async planning() {
+    const { options } = this;
+
+    const planningResponse = await this.request({
+      messages: this.getLLMMessages({
+        start: [
+          {
+            role: "system",
+            content: getSystemPrompt({
+              title: this.system.title,
+              tools: options.tools,
+              prompt: this.system.prompt,
+            }),
+          },
+        ],
+      }),
+      emits: this.getEmits(),
+    });
+
+    if (planningResponse instanceof RxaiError) {
+      // 规划出错
+      return;
+    }
+
+    this.setLlmContent(planningResponse);
+
+    const bashCommands = parseBashCommands(planningResponse);
+
+    if (!bashCommands.length) {
+      // 说明没有规划
+      this.events.emit("summary", planningResponse);
+      this.setStatus("success");
+    } else {
+      this.setCommands(
+        bashCommands.map((argv) => {
+          return {
+            startTime: 0,
+            endTime: 0,
+            argv,
+            status: null,
+            tool: {
+              name: argv[1],
+              displayName: argv[1],
+            },
+            content: {
+              llm: "",
+              display: "",
+              llmLast: "",
+              response: "",
+            },
+          };
+        }),
+        true,
+      );
+    }
+
+    this.setEndTime(new Date().getTime());
+  }
+
+  /** 执行规划的脚本 */
+  private async executeCommands() {
+    // 命令
+    const commands = this.commands;
+    if (!commands.length) {
+      // 没有命令
+      return;
+    }
+
+    // 当前执行到第几个
+    let index = commands.findIndex((command) => command.status !== "success");
+    if (index === -1) {
+      // 命令全部执行完成
+      return;
+    }
+
+    while (commands.length !== index && this.status === "pending") {
+      const command = commands[index];
+
+      // 变更状态，开始执行
+      command.status = "pending";
+      command.startTime = new Date().getTime();
+
+      this.setCommands(commands, false);
+
+      const [error, response] = await this.tryCatch(
+        async () =>
+          await retry(
+            () => {
+              return this.executeCommand(
+                command,
+                index === commands.length - 1,
+              );
+            },
+            this.requestInstance.maxRetries, // 暂时都用request配置的maxRetries
+            (error) => {
+              return error instanceof RequestError;
+            },
+          ),
+        true,
+      );
+
+      if (response === CATCH_EMPTY) {
+        command.status = "error";
+        if (error instanceof ToolError) {
+          const message = error.message;
+          Object.assign(command.content, {
+            llm: message.llmContent,
+            display: message.displayContent,
+          });
+        } else if (error instanceof RequestError || error instanceof Error) {
+          const message = error.message;
+          Object.assign(command.content, {
+            llm: message,
+            display: message,
+          });
+        } else {
+          const message = "工具调用错误";
+          Object.assign(command.content, {
+            llm: message,
+            display: message,
+          });
+        }
+        this.setError(error);
+      } else {
+        command.status = "success";
+        Object.assign(command.content, response);
+        this.setCommands(commands, true);
+      }
+
+      command.endTime = new Date().getTime();
+
+      if (this.status === "pending") {
+        index++;
+        // TODO: idb记录状态
+        if (commands.length === index) {
+          // 所有工具都执行完成，设置完成状态
+          this.setStatus("success");
+
+          this.events.emit(
+            "summary",
+            command.content.llmLast || command.content.display,
+          );
+        }
+      }
+    }
+  }
+
+  /**
+   * 执行命令
+   * 目前均为node命令，后续可能扩展
+   */
+  private async executeCommand(
+    command: PlanningAgent["commands"][number],
+    /** 最后一条命令 */
+    last: boolean,
+  ) {
+    const { argv } = command;
+    const [, name, params] = argv;
+
+    // 已经前置校验过工具合法性，所以tool一定是有的
+    const tool = this.options.tools.find((tool) => {
+      return tool.name === name;
+    })!;
+
+    command.tool.displayName = tool.displayName;
+
+    /** 工具提示词 */
+    const toolPrompt = getToolPrompt(tool, {
+      attachments: this.options.attachments,
+    });
+
+    const content = {
+      llm: "",
+      display: "",
+      llmLast: "",
+      response: "",
+    };
+
+    const toolExecute = async (
+      tool: Tool,
+      params: Parameters<Tool["execute"]>[0],
+    ) => {
+      const [error, response] = await this.tryCatch(() => {
+        return tool.execute(params);
+      });
+
+      if (response === CATCH_EMPTY) {
+        throw error;
+      }
+
+      if (typeof response === "string") {
+        return {
+          llm: response,
+          display: response,
+          llmLast: "",
+        };
+      } else {
+        return {
+          llm: response.llmContent,
+          display: response.displayContent,
+          llmLast: "",
+        };
+      }
+    };
+
+    if (!toolPrompt) {
+      // 没有提示词，走本地调用，执行execute
+      Object.assign(
+        content,
+        await toolExecute(tool, {
+          params,
+          files: [],
+          content: "",
+        }),
+      );
+    } else {
+      let streamMessage = "";
+
+      const stream = tool.stream
+        ? (content: string, status: "start" | "ing" | "complete") => {
+            tool.stream!({
+              files: parseFileBlocks(content),
+              status,
+            });
+          }
+        : null;
+
+      stream?.("", "start");
+
+      const llmMessages = this.getLLMMessages({
+        start: [
+          {
+            role: "system",
+            content: getToolPrompt(tool, {
+              attachments: this.options.attachments,
+            }),
+          },
+        ],
+      });
+
+      const response = await this.request({
+        messages: llmMessages,
+        emits: this.getEmits({
+          write: (chunk) => {
+            if (tool.streamThoughts) {
+              this.events.emit("streamMessage", chunk);
+            }
+
+            streamMessage += chunk;
+            stream?.(streamMessage, "ing");
+          },
+          complete: (content) => {
+            stream?.(content, "complete");
+          },
+        }),
+        aiRole: tool.aiRole,
+      });
+
+      if (response instanceof RxaiError) {
+        throw response;
+      }
+
+      // 解析文件
+      const files = parseFileBlocks(response);
+
+      Object.assign(
+        content,
+        await toolExecute(tool, {
+          params,
+          files,
+          content: response,
+        }),
+        { response },
+      );
+    }
+
+    if (last) {
+      // 最后一项
+      if (tool.lastAppendMessage) {
+        // 工具执行完成后需要默认再调用一次请求
+        const llmMessages = this.getLLMMessages({
+          start: [
+            {
+              role: "system",
+              content:
+                getToolPrompt(tool, {
+                  attachments: this.options.attachments,
+                }) || "请根据最新消息，回答用户问题",
+            },
+          ],
+          end: [
+            {
+              role: "user",
+              content: tool.lastAppendMessage,
+            },
+          ],
+        });
+
+        const response = await this.request({
+          messages: llmMessages,
+          emits: this.getEmits({
+            write: (chunk) => {
+              this.events.emit("streamMessage", chunk);
+            },
+          }),
+          aiRole: tool.aiRole,
+        });
+
+        if (response instanceof RxaiError) {
+          throw response;
+        }
+
+        content.llmLast = response;
+      }
+    }
+
+    return content;
+  }
+
+  /** emits代理 */
+  private getEmits(emits?: Partial<Emits>): Emits {
+    const { options } = this;
+    return {
+      write: (chunk) => {
+        options.emits.write(chunk);
+        emits?.write?.(chunk);
+      },
+      complete: (content) => {
+        emits?.complete?.(content);
+      },
+      error: (error) => {
+        options.emits.error(error);
+        // this.setStatus("error");
+        console.error(error);
+        emits?.error?.(error);
+      },
+      cancel: (fn) => {
+        options.emits.cancel(fn);
+        emits?.cancel?.(fn);
+      },
+    };
+  }
+
+  /** 获取用户需求 */
+  private getUserMessage() {
+    const { options } = this;
+    return {
+      role: "user",
+      content: options.attachments?.length
+        ? [
+            {
+              type: "text",
+              text: options.message,
+            },
+            ...options.attachments
+              .filter((attachement) => {
+                return attachement.type === "image";
+              })
+              .map((attachement) => {
+                return {
+                  type: "image_url",
+                  image_url: {
+                    url: attachement.content,
+                  },
+                };
+              }),
+          ]
+        : options.message,
+    };
+  }
+
+  /** 获取对话消息列表 */
   private getLLMMessages(params: { start?: ChatMessages; end?: ChatMessages }) {
+    const { options } = this;
     const { start, end } = params;
+
     const messages = [
-      ...this.historyMessages,
-      ...(typeof this.presetMessages === "function"
-        ? this.presetMessages()
-        : this.presetMessages),
-      ...this.messages,
+      ...options.historyMessages,
+      ...(typeof options.presetMessages === "function"
+        ? options.presetMessages()
+        : options.presetMessages),
+      this.getUserMessage(),
     ];
+
+    for (const command of this.commands) {
+      if (command.status === null) {
+        break;
+      }
+
+      if (command.status === "success") {
+        messages.push(
+          {
+            role: "user",
+            content: `当前正在调用工具（${command.tool.name}，请根据系统提示词的工具描述、当前聚焦元素、和最近的用户需求提供输出。`,
+          },
+          {
+            role: "assistant",
+            content: command.content.llm || command.content.display,
+          },
+        );
+      } else {
+        messages.push({
+          role: "user",
+          content: `当前正在调用工具（${command.tool.name}，请根据系统提示词的工具描述、当前聚焦元素、和最近的用户需求提供输出。`,
+        });
+      }
+    }
+
+    if (this.error instanceof ToolError) {
+      messages.push(
+        {
+          role: "assistant",
+          content: `工具调用错误：${this.error.message.llmContent}`,
+        },
+        {
+          role: "user",
+          content: "请重试",
+        },
+      );
+    }
+
     if (start) {
       messages.unshift(...start);
     }
@@ -283,522 +645,12 @@ ${toolsMessages.reduce((acc, cur) => {
       messages.push(...end);
     }
 
-    messages.push(...this.errorMessages);
-    this.setErrorMessages([]);
+    this.setError(null);
 
     return messages;
   }
 
-  private async getPlanList() {
-    return new Promise<void>((resolve, reject) => {
-      (async () => {
-        const messages = this.getLLMMessages({
-          start: [
-            {
-              role: "system",
-              content: getSystemPrompt({
-                title: this.system.title,
-                tools: this.tools,
-                prompt: this.system.prompt,
-              }),
-            },
-          ],
-        });
-
-        const response = await this.request({
-          messages,
-          emits: this.getEmits({}),
-        });
-
-        if (response instanceof RxaiError) {
-          // this.setErrorMessages([
-          //   {
-          //     role: "assistant",
-          //     content: `规划接口调用错误：${response.message}`,
-          //   },
-          //   {
-          //     role: "user",
-          //     content: "请重试",
-          //   },
-          // ]);
-          reject();
-          return;
-        }
-
-        if (response) {
-          // 解析规划内容
-          // const match = response!.match(/```bash\s*\n(.+?)\n/);
-
-          // if (match?.[1]) {
-          //   // 正常返回计划列表，执行act
-          //   // TODO: 解析失败的重试
-          //   const planList = match[1]
-          //     .split("&&")
-          //     .filter((command) => {
-          //       return /^node\s+\S+/.test(command.trim());
-          //     })
-          //     .map((command) => {
-          //       return command.trim().replace(/^node\s+/, "");
-          //     });
-
-          //   // 工具检查
-          //   const { valid, validTools, invalidTools } =
-          //     this.validatePlanListTools(planList);
-
-          //   if (!valid) {
-          //     const content = `规划错误，使用了不存在的工具(${invalidTools.join(", ")})`;
-          //     throw new ToolError({
-          //       displayContent: content,
-          //       llmContent: content,
-          //     });
-          //   }
-
-          //   this.setPlanList(
-          //     validTools.map((plan: string) => {
-          //       return {
-          //         name: plan,
-          //         status: null,
-          //       };
-          //     }),
-          //   );
-          //   this.pushMessages([
-          //     {
-          //       role: "assistant",
-          //       content: response,
-          //     },
-          //   ]);
-          // }
-
-          const bashCommands = parseBashCommands(response);
-          console.log("[bashCommands]", bashCommands);
-          if (bashCommands.length) {
-            const planList = bashCommands.map((command) => {
-              return {
-                name: command.name,
-                params: command.params,
-              };
-            });
-
-            // 工具检查
-            const { valid, validTools, invalidTools } =
-              this.validatePlanListTools(planList);
-
-            if (!valid) {
-              const content = `规划错误，使用了不存在的工具(${invalidTools.join(", ")})`;
-              throw new ToolError({
-                displayContent: content,
-                llmContent: content,
-              });
-            }
-
-            this.setPlanList(
-              validTools.map((validTool) => {
-                return {
-                  ...validTool,
-                  status: null,
-                };
-              }),
-            );
-            this.pushMessages([
-              {
-                role: "assistant",
-                content: response,
-              },
-            ]);
-          } else {
-            // 没有返回计划列表，结束
-            this.emits.complete(response);
-            this.pushMessages([
-              {
-                role: "assistant",
-                content: response,
-              },
-            ]);
-
-            this.emitUserFriendlyMessages({
-              messages: [
-                {
-                  role: "assistant",
-                  content: response,
-                },
-              ],
-              type: "push",
-            });
-            this.setStatus("success");
-          }
-        }
-        this.setPlanError(null);
-        resolve();
-      })().catch((content) => {
-        if (content instanceof ToolError) {
-          this.setError(content);
-        }
-        reject();
-      });
-    });
-  }
-
-  private async executePlanList() {
-    // 规划执行结束或状态非pending，停止循环
-    while (
-      this.planList.length &&
-      this.planList.length !== this.planIndex &&
-      this.status === "pending"
-    ) {
-      const plan = this.planList[this.planIndex];
-
-      // 状态变更
-      plan.status = "pending";
-
-      try {
-        await retry(() => {
-          this.setStatus("pending");
-          return this.executeTool(plan);
-        }, this.requestInstance.maxRetries);
-        if (this.status === "pending") {
-          this.planIndex++;
-          this.idb?.putContent({
-            id: this.uuid,
-            type: "planIndex",
-            content: this.planIndex,
-          });
-          plan.status = "success";
-          if (this.planList.length === this.planIndex) {
-            this.setStatus("success");
-          }
-        } else {
-          plan.status = "error";
-        }
-      } catch (error) {
-        this.setError(error as NonNullable<PlanError>);
-        plan.status = "error";
-      }
-      this.idb?.putContent({
-        id: this.uuid,
-        type: "planList",
-        content: this.planList,
-      });
-    }
-
-    return;
-  }
-
-  private async executeTool(plan: PlanList[number]) {
-    return new Promise<void>((resolve, reject) => {
-      (async () => {
-        // 已前置校验过工具，所有tool一定存在
-        const tool = this.tools.find((tool) => {
-          return tool.name === plan.name;
-        })!;
-
-        const userFriendlyMessages = [
-          {
-            role: "tool",
-            status: "pending",
-            content: {
-              name: tool.name,
-              displayName: tool.displayName,
-            },
-          },
-        ] as Parameters<
-          PlanningAgent["emitUserFriendlyMessages"]
-        >[0]["messages"];
-
-        const messages: ChatMessages = [
-          {
-            role: "user",
-            content: `当前正在调用工具（${tool.name}，请根据系统提示词的工具描述、当前聚焦元素、和最近的用户需求提供输出。`,
-          },
-        ];
-
-        // 工具loading
-        this.emitUserFriendlyMessages({
-          messages: userFriendlyMessages,
-          type: "update",
-        });
-
-        /** 是否最后一项 */
-        const isLastPlan = this.planList.length - 1 === this.planIndex;
-        /** 工具提示词 */
-        const toolPrompt = getToolPrompt(tool, {
-          attachments: this.attachments,
-        });
-
-        let toolResult:
-          | PlanError
-          | string
-          | ReturnType<typeof normalizeToolMessage>;
-
-        if (!toolPrompt) {
-          // 没有提示词，走本地调用，执行execute
-          const content = await this.toolExecute(tool, {
-            params: plan.params,
-            files: [],
-            content: "",
-          });
-          if (content instanceof RxaiError) {
-            if (content instanceof ToolError) {
-              this.setErrorMessages([
-                ...messages.slice(1),
-                {
-                  role: "assistant",
-                  content: `工具调用错误：${content.message.displayContent}`,
-                },
-                {
-                  role: "user",
-                  content: "请重试",
-                },
-              ]);
-            }
-            return;
-          }
-          toolResult = normalizeToolMessage(content);
-
-          // 推送消息
-          messages.push({ role: "assistant", content: toolResult.llmContent });
-        } else {
-          let content = "";
-
-          const stream = tool.stream
-            ? (content: string, status: "start" | "ing" | "complete") => {
-                tool.stream!({
-                  files: parseFileBlocks(content),
-                  status,
-                });
-              }
-            : null;
-
-          // const stream = tool.stream
-          //   ? throttle((content, status) => {
-          //       tool.stream!({
-          //         files: parseFileBlocks(content),
-          //         status,
-          //       });
-          //     }, 1000)
-          //   : null;
-
-          stream?.("", "start");
-
-          const llmMessages = this.getLLMMessages({
-            start: [
-              {
-                role: "system",
-                content: getToolPrompt(tool, { attachments: this.attachments }),
-              },
-            ],
-            end: messages,
-          });
-
-          const response = await this.request({
-            messages: llmMessages,
-            emits: this.getEmits({
-              write: (chunk) => {
-                if (tool.streamThoughts) {
-                  this.events.emit("messageStream", chunk);
-                }
-
-                content += chunk;
-                stream?.(content, "ing");
-              },
-              complete: (content) => {
-                stream?.(content, "complete");
-              },
-            }),
-            aiRole: tool.aiRole,
-          });
-
-          if (response instanceof RxaiError) {
-            // this.setErrorMessages([
-            //   ...messages.slice(1),
-            //   {
-            //     role: "assistant",
-            //     content: `工具调用调用错误：${response.message}`,
-            //   },
-            //   {
-            //     role: "user",
-            //     content: "请重试",
-            //   },
-            // ]);
-            reject();
-            return;
-          }
-
-          // 解析文件
-          const files = parseFileBlocks(response);
-
-          // 执行工具
-          toolResult = await this.toolExecute(tool, {
-            files,
-            content: response,
-            params: plan.params,
-          });
-
-          if (toolResult instanceof RxaiError) {
-            if (toolResult instanceof ToolError) {
-              this.setErrorMessages([
-                ...messages.slice(1),
-                {
-                  role: "assistant",
-                  content: `工具调用错误：${toolResult.message.displayContent}`,
-                },
-                {
-                  role: "user",
-                  content: "请重试",
-                },
-              ]);
-            } else {
-              reject();
-            }
-            return;
-          }
-
-          toolResult = normalizeToolMessage(toolResult);
-
-          messages.push({ role: "assistant", content: toolResult.llmContent });
-        }
-
-        if (isLastPlan) {
-          // 最后一项
-          if (tool.lastAppendMessage) {
-            // 工具执行完成后需要默认再调用一次请求
-            const llmMessages = this.getLLMMessages({
-              start: [
-                {
-                  role: "system",
-                  content:
-                    getToolPrompt(tool, {
-                      attachments: this.attachments,
-                    }) || "请根据最新消息，回答用户问题",
-                },
-              ],
-              end: [
-                ...messages,
-                {
-                  role: "user",
-                  content: tool.lastAppendMessage,
-                },
-              ],
-            });
-
-            const response = await this.request({
-              messages: llmMessages,
-              emits: this.getEmits({
-                write: (chunk) => {
-                  this.events.emit("messageStream", chunk);
-                },
-              }),
-              aiRole: tool.aiRole,
-            });
-
-            if (response instanceof RxaiError) {
-              // this.setErrorMessages([
-              //   ...messages.slice(1),
-              //   {
-              //     role: "assistant",
-              //     content: `工具调用调用错误：${response.message}`,
-              //   },
-              //   {
-              //     role: "user",
-              //     content: "请重试",
-              //   },
-              // ]);
-              reject();
-              return;
-            }
-
-            if (response) {
-              // 工具状态更新
-              userFriendlyMessages[0].status = "success";
-              // 推送消息
-              userFriendlyMessages.push({
-                role: "assistant",
-                content: response,
-              });
-            }
-          } else if (tool.streamThoughts) {
-            userFriendlyMessages.push({
-              role: "assistant",
-              content: toolResult.displayContent,
-            });
-          } else {
-            userFriendlyMessages.push({
-              role: "assistant",
-              content: toolResult.displayContent,
-            });
-          }
-
-          // 最后一个工具完成后，认为最终完成
-          this.emits.complete(toolResult.llmContent);
-        }
-
-        userFriendlyMessages[0].status = "success";
-
-        // 清除toolError
-        this.setPlanError(null);
-
-        // 完成请求，推送消息
-        this.pushMessages(messages);
-
-        this.emitUserFriendlyMessages({
-          messages: userFriendlyMessages,
-          type: "push",
-        });
-
-        resolve();
-      })()
-        .then(resolve)
-        .catch(reject);
-    });
-  }
-
-  /** 用户友好消息推送 */
-  private emitUserFriendlyMessages(params: {
-    messages: (ChatMessages[number] & {
-      status?: "pending" | "success" | "error" | "aborted";
-    })[];
-    type: "push" | "update";
-  }) {
-    const { type, messages } = params;
-
-    if (type === "push") {
-      this.userFriendlyMessages.push(...messages);
-      this.events.emit("userFriendlyMessages", this.userFriendlyMessages);
-      this.idb?.putContent({
-        id: this.uuid,
-        type: "userFriendlyMessages",
-        content: this.userFriendlyMessages,
-      });
-    } else {
-      this.events.emit("userFriendlyMessages", [
-        ...this.userFriendlyMessages,
-        ...messages,
-      ]);
-    }
-  }
-
-  /** emits代理 */
-  private getEmits(emits: Partial<Emits>): Emits {
-    return {
-      write: (chunk) => {
-        this.emits.write(chunk);
-        emits?.write?.(chunk);
-      },
-      complete: (content) => {
-        emits?.complete?.(content);
-      },
-      error: (error) => {
-        this.emits.error(error);
-        this.setStatus("error");
-        console.error(error);
-        emits?.error?.(error);
-      },
-      cancel: (fn) => {
-        this.emits.cancel(fn);
-        emits?.cancel?.(fn);
-      },
-    };
-  }
-
+  /** 请求统一封装 */
   private async request(params: Parameters<Request["requestAsStream"]>[0]) {
     const response = await this.requestInstance.requestAsStream({
       ...params,
@@ -809,173 +661,78 @@ ${toolsMessages.reduce((acc, cur) => {
       return response.content;
     } else if (response.type === "cancel") {
       const error = new RequestError("已取消执行");
-      // const toolError = new ToolError({
-      //   displayContent: "已取消执行",
-      //   llmContent: "已取消执行",
-      // });
       this.setError(error);
       return error;
     }
     return response.content;
   }
 
-  private async toolExecute(
-    tool: Tool,
-    params?: Parameters<Tool["execute"]>[0],
-  ): Promise<
-    | string
-    | { displayContent: string; llmContent: string }
-    | NonNullable<PlanError>
-  > {
-    try {
-      const result = await tool.execute(params!);
-      return result;
-    } catch (e) {
-      const toolError = e as NonNullable<PlanError>;
-      this.setError(toolError);
-      return toolError;
+  /** 统一错误处理 */
+  private setError(error: unknown) {
+    if (!error) {
+      // error清理
+      this.error = null;
+      this.events.emit("error", "");
+      this.idbPubContent("error", null);
+      return;
     }
-  }
-
-  async retry() {
-    if (this.error?.type === "retry") {
-      this.run();
-    } else {
-      this.emitUserFriendlyMessages({
-        messages: [],
-        type: "update",
-      });
-      this.setStatus("pending");
-      this.start();
-    }
-  }
-
-  /**
-   * 检查计划列表中的工具是否存在
-   * @param planList 工具名称列表
-   * @returns 检查结果，valid为true时表示所有工具都存在
-   */
-  private validatePlanListTools(
-    planList: {
-      name: string;
-      params: {
-        [key: string]: string;
-      };
-    }[],
-  ): {
-    valid: boolean;
-    validTools: {
-      name: string;
-      params: {
-        [key: string]: string;
-      };
-    }[];
-    invalidTools: {
-      name: string;
-      params: {
-        [key: string]: string;
-      };
-    }[];
-  } {
-    const validTools: {
-      name: string;
-      params: {
-        [key: string]: string;
-      };
-    }[] = [];
-    const invalidTools: {
-      name: string;
-      params: {
-        [key: string]: string;
-      };
-    }[] = [];
-
-    for (const plan of planList) {
-      const tool = this.tools.find((tool) => tool.name === plan.name);
-      if (tool) {
-        validTools.push(plan);
-      } else {
-        invalidTools.push(plan);
-      }
-    }
-
-    return {
-      valid: invalidTools.length === 0,
-      validTools,
-      invalidTools,
-    };
-  }
-
-  private setPlanError(error: PlanError) {
-    this.error = error;
-    this.idb?.putContent({
-      id: this.uuid,
-      type: "error",
-      content: error
-        ? {
-            message: error.message,
-            type: error.type,
-          }
-        : null,
-    });
-  }
-
-  private setError(error: NonNullable<PlanError>) {
     this.setStatus("error");
-    this.setPlanError(error);
-    this.emitUserFriendlyMessages({
-      messages: [
-        {
-          role: "error",
-          content:
-            error instanceof ToolError
-              ? error.message.displayContent
-              : error.message,
-        },
-      ],
-      type: "update",
+    if (error instanceof RxaiError) {
+      this.error = error;
+    } else {
+      const message = (error as Error)?.message || "工具调用错误";
+      // 默认为ToolError
+      this.error = new ToolError({
+        llmContent: message,
+        displayContent: message,
+      });
+    }
+
+    this.idbPubContent("error", {
+      message: this.error.message,
+      type: this.error.type,
     });
+
+    this.events.emit("error", this.error.message.displayContent);
   }
 
-  private setStatus(status: PlanStatus) {
+  /** 设置状态 */
+  private setStatus(status: PlanningAgent["status"]) {
     this.status = status;
-    this.idb?.putContent({
-      id: this.uuid,
-      type: "status",
-      content: status,
-    });
+    this.idbPubContent("status", status);
   }
 
+  /** TODO: 获取DB存储的plan静态数据 */
   getDBContent() {
+    const { options } = this;
     return {
       uuid: this.uuid,
-      extension: this.extension,
-      enableLog: this.enableLog,
-      attachments: this.attachments,
-      message: this.message,
-      presetHistoryMessages: this.presetHistoryMessages,
+      extension: options.extension,
+      enableLog: options.enableLog,
+      attachments: options.attachments,
+      message: options.message,
+      presetHistoryMessages: options.presetHistoryMessages,
       presetMessages:
-        typeof this.presetMessages === "function"
-          ? this.presetMessages()
-          : this.presetMessages,
+        typeof options.presetMessages === "function"
+          ? options.presetMessages()
+          : options.presetMessages,
+      planList: options.planList,
     };
   }
 
+  /** TODO: 从DB恢复 */
   recover(params: any) {
-    this.fromIDB = true;
+    this.enableRetry = false;
     params.forEach(({ type, content }: any) => {
       if (type === "error") {
         if (content) {
-          if (content.type === "tool") {
-            // @ts-ignore
-            this[type] = new ToolError(content.message);
-          } else if (content.type === "request") {
-            // @ts-ignore
-            this[type] = new RequestError(content.message);
-          } else if (content.type === "retry") {
-            // @ts-ignore
-            this[type] = new RetryError(content.message);
-          }
+          const ErrorClassMap = {
+            tool: ToolError,
+            request: RequestError,
+            retry: RetryError,
+          } as const;
+          // @ts-ignore
+          this[type] = new ErrorClassMap[content.type](content.message);
         }
       } else {
         // @ts-ignore
@@ -988,32 +745,133 @@ ${toolsMessages.reduce((acc, cur) => {
       this.status = "aborted";
     }
 
-    this.loading = false;
-    this.events.emit("loading", false);
+    this.setLoading(false);
 
-    const userFriendlyMessages = [...this.userFriendlyMessages];
+    const commands = this.commands;
+    commands.forEach((command) => {
+      if (command.status === "pending") {
+        command.status = null;
+      }
+    });
+
+    this.setCommands(commands, false);
 
     if (this.error) {
-      let message = "";
-      if (this.error instanceof ToolError) {
-        message = this.error.message.displayContent;
-      } else if (this.error instanceof RequestError) {
-        message = this.error.message;
-      } else if (this.error instanceof RetryError) {
-        message = this.error.message;
+      this.events.emit("error", this.error.message.displayContent);
+    } else {
+      if (this.status === "aborted") {
+        this.events.emit("summary", "已取消");
+      } else if (commands.length) {
+        const command = commands[commands.length - 1];
+        this.events.emit(
+          "summary",
+          command.content.llmLast ||
+            command.content.display ||
+            command.content.llm,
+        );
+      } else {
+        this.events.emit("summary", this.llmContent);
       }
-      userFriendlyMessages.push({
-        role: "error",
-        content: message,
+    }
+  }
+
+  /** 获取扩展参数 */
+  get extension() {
+    return this.options.extension;
+  }
+
+  /** TODO: 获取当前plan的总结信息 */
+  getMessages() {
+    if (this.loading || this.status === "pending") {
+      return [];
+    }
+
+    const messages = [this.getUserMessage()];
+
+    if (this.commands.length) {
+      let content = "";
+      for (const command of this.commands) {
+        if (command.status === null) {
+          break;
+        }
+
+        content =
+          content +
+          `\n调用工具（${command.tool.name}）\n` +
+          `${command.content.llmLast || command.content.llm || command.content.display}`;
+      }
+
+      messages.push({
+        role: "user",
+        content: `<对话日志>
+${content}
+</对话日志>`,
       });
-    } else if (this.status === "aborted") {
-      userFriendlyMessages.push({
-        role: "aborted",
-        content: "已取消",
+    } else {
+      messages.push({
+        role: "assistant",
+        content: this.llmContent,
       });
     }
 
-    this.events.emit("userFriendlyMessages", userFriendlyMessages);
+    return messages;
+  }
+
+  /** 安全执行 */
+  private async tryCatch<T>(
+    task: () => T | Promise<T>,
+    log: boolean = false,
+  ): Promise<[undefined, T] | [unknown, typeof CATCH_EMPTY]> {
+    try {
+      const result = task();
+      if (result instanceof Promise) {
+        return [undefined, await result];
+      }
+      return [undefined, result];
+    } catch (e) {
+      if (log) {
+        console.error("[Rxai - planning - error]", e);
+      }
+      return [e, CATCH_EMPTY];
+    }
+  }
+
+  async retry() {
+    if (this.error instanceof RetryError) {
+      // 从意图识别开始
+      if (this.defaultPlanList) {
+        // 有默认配置，重制commands
+        this.setCommands(
+          parseBashCommands(this.llmContent).map((argv) => {
+            return {
+              startTime: 0,
+              endTime: 0,
+              argv,
+              status: null,
+              tool: {
+                name: argv[1],
+                displayName: argv[1],
+              },
+              content: {
+                llm: "",
+                display: "",
+                llmLast: "",
+                response: "",
+              },
+            };
+          }),
+          true,
+        );
+      } else {
+        // 清空规划
+        this.setLlmContent("");
+        this.setCommands([], true);
+      }
+
+      this.setError(null);
+    }
+
+    await this.start();
   }
 }
 
@@ -1031,12 +889,7 @@ function parseBashCommands(string: string) {
     cmd.split(/\s+/).filter(Boolean),
   );
 
-  const result: {
-    name: string;
-    params: {
-      [key: string]: string;
-    };
-  }[] = [];
+  const result: [string, string, { [key: string]: string }][] = [];
 
   commandArray.forEach((command) => {
     const [node, filename, ...args] = command;
@@ -1053,12 +906,8 @@ function parseBashCommands(string: string) {
       }
     });
 
-    result.push({
-      name: filename,
-      params,
-    });
+    result.push([node, filename, params]);
   });
 
-  console.log("[commandArray]", commandArray);
   return result;
 }

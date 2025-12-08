@@ -1,4 +1,8 @@
-const retry = <T>(execute: () => T, count: number): Promise<T> => {
+const retry = <T>(
+  execute: () => T,
+  count: number,
+  check?: (error: unknown) => boolean,
+): Promise<T> => {
   return new Promise((resolve, reject) => {
     const attempt = (currentCount: number) => {
       try {
@@ -6,8 +10,8 @@ const retry = <T>(execute: () => T, count: number): Promise<T> => {
 
         if (result instanceof Promise) {
           result.then(resolve).catch((error) => {
-            if (currentCount > 1) {
-              console.log(`重试中... 剩余次数: ${currentCount - 2}`);
+            if (currentCount > 1 && (check ? check(error) : true)) {
+              console.error(`重试中... 剩余次数: ${currentCount - 2}`, error);
               attempt(currentCount - 1);
             } else {
               reject(error);
@@ -17,8 +21,8 @@ const retry = <T>(execute: () => T, count: number): Promise<T> => {
           resolve(result);
         }
       } catch (error) {
-        if (currentCount > 1) {
-          console.log(`重试中... 剩余次数: ${currentCount - 2}`);
+        if (currentCount > 1 && (check ? check(error) : true)) {
+          console.error(`重试中... 剩余次数: ${currentCount - 2}`, error);
           attempt(currentCount - 1);
         } else {
           reject(error);

@@ -1,9 +1,9 @@
-import { RxaiError } from "./base";
+import { RxaiError, RxaiErrorMessage, normalizeErrorMessage } from "./base";
 
-class RetryError extends RxaiError<string> {
-  constructor(error: string) {
+class RetryError extends RxaiError {
+  constructor(error: string | RxaiErrorMessage) {
     super({
-      error,
+      error: normalizeErrorMessage(error),
       type: "retry",
     });
   }
