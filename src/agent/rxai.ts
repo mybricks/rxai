@@ -145,6 +145,12 @@ class Rxai extends BaseAgent {
 
     this.idb?.clear();
   }
+
+  export() {
+    return this.cacheMessages.map((planAgent) => {
+      return planAgent.export();
+    });
+  }
 }
 
 export { Rxai, RegisterParams, RequestParams };

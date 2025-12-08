@@ -961,6 +961,37 @@ class PlanningAgent extends BaseAgent {
 
     await this.start();
   }
+
+  export() {
+    const { options } = this;
+    return {
+      uuid: this.uuid,
+      options: {
+        attachments: options.attachments,
+        extension: options.extension,
+        message: options.message,
+        presetHistoryMessages: options.presetHistoryMessages,
+        presetMessages:
+          typeof options.presetMessages === "function"
+            ? options.presetMessages()
+            : options.presetMessages,
+      },
+      commands: this.commands,
+      defaultPlanList: this.defaultPlanList,
+      enableLog: this.enableLog,
+      enableRetry: this.enableRetry,
+      endTime: this.endTime,
+      error: this.error
+        ? {
+            message: this.error.message,
+            type: this.error.type,
+          }
+        : undefined,
+      llmContent: this.llmContent,
+      startTime: this.startTime,
+      status: this.status,
+    };
+  }
 }
 
 export { PlanningAgent };
