@@ -797,6 +797,8 @@ class PlanningAgent extends BaseAgent {
 
     const userMessage = this.getUserMessage();
 
+    const historyPresetMessage = this.options.presetHistoryMessages ?? [];
+
     let userTextMessage;
     let userMessageRef: any;
 
@@ -832,15 +834,26 @@ class PlanningAgent extends BaseAgent {
           `${command.content.llmLast || command.content.llm || command.content.display}`;
       }
 
-      setSummaryMessage(`<历史用户需求>${userTextMessage}</历史用户需求>
-<历史对话日志>
-${content}
+      setSummaryMessage(`<历史对话日志>
+  ${historyPresetMessage.reduce((acc, cur) => {
+    return acc + `<系统消息>${cur.content}</系统消息>`;
+  }, "")}
+  <用户消息>${userTextMessage}</用户消息>
+  <你的工具调用记录>
+  ${content}
+  </你的工具调用记录>
 </历史对话日志>`);
     } else {
-      setSummaryMessage(`<历史用户需求>${userTextMessage}</历史用户需求>
-<历史对话日志>
-${this.llmContent}
-</历史对话日志>`);
+      setSummaryMessage(`<历史对话日志>
+  ${historyPresetMessage.reduce((acc, cur) => {
+    return acc + `<系统消息>${cur.content}</系统消息>`;
+  }, "")}
+  <用户消息>${userTextMessage}</用户消息>
+  <你的返回>
+  ${this.llmContent}
+  </你的返回>
+</历史对话日志>
+`);
     }
 
     return [userMessage];
