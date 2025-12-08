@@ -593,6 +593,15 @@ class PlanningAgent extends BaseAgent {
     const { options } = this;
     const { start, end } = params;
 
+    console.log(
+      "getLLMMessages",
+      options.historyMessages,
+      typeof options.presetMessages === "function"
+        ? options.presetMessages()
+        : options.presetMessages,
+      this.getUserMessage(),
+    );
+
     const messages = [
       ...options.historyMessages,
       ...(typeof options.presetMessages === "function"
@@ -786,7 +795,29 @@ class PlanningAgent extends BaseAgent {
       return [];
     }
 
-    const messages = [this.getUserMessage()];
+    const userMessage = this.getUserMessage();
+
+    let userTextMessage;
+    let userMessageRef: any;
+
+    if (typeof userMessage?.content === "string") {
+      userMessageRef = userMessage;
+      userTextMessage = userMessage?.content;
+    } else if (Array.isArray(userMessage?.content)) {
+      const idx = userMessage?.content?.findIndex(
+        (item) => item.type === "text",
+      );
+      userMessageRef = userMessage?.content?.[idx];
+      userTextMessage = userMessage?.content?.[idx].text;
+    }
+
+    const setSummaryMessage = (summaryContent: string) => {
+      if (userMessageRef.text) {
+        userMessageRef.text = summaryContent;
+      } else {
+        userMessageRef.content = summaryContent;
+      }
+    };
 
     if (this.commands.length) {
       let content = "";
@@ -801,20 +832,18 @@ class PlanningAgent extends BaseAgent {
           `${command.content.llmLast || command.content.llm || command.content.display}`;
       }
 
-      messages.push({
-        role: "user",
-        content: `<对话日志>
+      setSummaryMessage(`<历史用户需求>${userTextMessage}</历史用户需求>
+<历史对话日志>
 ${content}
-</对话日志>`,
-      });
+</历史对话日志>`);
     } else {
-      messages.push({
-        role: "assistant",
-        content: this.llmContent,
-      });
+      setSummaryMessage(`<历史用户需求>${userTextMessage}</历史用户需求>
+<历史对话日志>
+${this.llmContent}
+</历史对话日志>`);
     }
 
-    return messages;
+    return [userMessage];
   }
 
   /** 安全执行 */
