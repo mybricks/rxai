@@ -152,8 +152,8 @@ class PlanningAgent extends BaseAgent {
   private async start() {
     this.setStatus("pending");
 
-    if (!this.options.planList) {
-      // 没有配置默认planList，需要规划
+    if (!this.commands.length) {
+      // 没有commands，需要规划
       this.setLoading(true);
 
       await this.tryCatch(
@@ -208,7 +208,6 @@ class PlanningAgent extends BaseAgent {
     }
   }
   private idbPubContent(type: string, content: any) {
-    console.log("this.uuid", this.uuid, type, content);
     this.options.idb?.putContent({
       id: this.uuid,
       type,
@@ -610,42 +609,89 @@ class PlanningAgent extends BaseAgent {
       this.getUserMessage(),
     ];
 
-    for (const command of this.commands) {
-      if (command.status === null) {
-        break;
+    let toolMessage = "";
+    let toolPendingMessage = "";
+
+    if (this.commands.length) {
+      toolMessage =
+        "以下是对完成当前需求所需的待执行bash命令列表，将严格按照顺序执行" +
+        "\n## 待执行bash命令列表";
+
+      for (const command of this.commands) {
+        if (command.status === null) {
+          break;
+        }
+
+        const { argv } = command;
+        const [bash, name, params] = argv;
+        const success = command.status === "success";
+        toolMessage +=
+          `\n- [${success ? "x" : " "}] ${bash} ${name} ${Object.entries(
+            params,
+          ).reduce((acc, [key, value]) => {
+            return acc + `-${key} ${value} `;
+          }, "")}` +
+          (success
+            ? `\nstdout：${command.content.llm || command.content.display}`
+            : "");
+
+        if (command.status === "pending") {
+          toolPendingMessage =
+            `\n\n当前正在执行命令 ${bash} ${name} ${Object.entries(
+              params,
+            ).reduce((acc, [key, value]) => {
+              return acc + `-${key} ${value} `;
+            }, "")}` +
+            (this.error instanceof ToolError
+              ? `\nzsh: ${this.error.message.llmContent}` +
+                "\n\n执行命令报错，请重试。"
+              : "\n请") +
+            "根据系统提示词的工具描述、当前聚焦元素、和最近的用户需求提供输出。";
+        }
       }
 
-      if (command.status === "success") {
-        messages.push(
-          {
-            role: "user",
-            content: `当前正在调用工具（${command.tool.name}，请根据系统提示词的工具描述、当前聚焦元素、和最近的用户需求提供输出。`,
-          },
-          {
-            role: "assistant",
-            content: command.content.llm || command.content.display,
-          },
-        );
-      } else {
-        messages.push({
-          role: "user",
-          content: `当前正在调用工具（${command.tool.name}，请根据系统提示词的工具描述、当前聚焦元素、和最近的用户需求提供输出。`,
-        });
-      }
+      messages.push({
+        role: "user",
+        content: toolMessage + toolPendingMessage,
+      });
     }
 
-    if (this.error instanceof ToolError) {
-      messages.push(
-        {
-          role: "assistant",
-          content: `工具调用错误：${this.error.message.llmContent}`,
-        },
-        {
-          role: "user",
-          content: "请重试",
-        },
-      );
-    }
+    // for (const command of this.commands) {
+    //   if (command.status === null) {
+    //     break;
+    //   }
+
+    //   if (command.status === "success") {
+    //     messages.push(
+    //       {
+    //         role: "user",
+    //         content: `当前正在调用工具（${command.tool.name}，请根据系统提示词的工具描述、当前聚焦元素、和最近的用户需求提供输出。`,
+    //       },
+    //       {
+    //         role: "assistant",
+    //         content: command.content.llm || command.content.display,
+    //       },
+    //     );
+    //   } else {
+    //     messages.push({
+    //       role: "user",
+    //       content: `当前正在调用工具（${command.tool.name}，请根据系统提示词的工具描述、当前聚焦元素、和最近的用户需求提供输出。`,
+    //     });
+    //   }
+    // }
+
+    // if (this.error instanceof ToolError) {
+    //   messages.push(
+    //     {
+    //       role: "assistant",
+    //       content: `工具调用错误：${this.error.message.llmContent}`,
+    //     },
+    //     {
+    //       role: "user",
+    //       content: "请重试",
+    //     },
+    //   );
+    // }
 
     if (start) {
       messages.unshift(...start);
