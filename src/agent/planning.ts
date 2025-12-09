@@ -17,7 +17,7 @@ interface PlanningAgentOptions extends BaseAgentOptions {
   emits: Emits;
   tools: Tool[];
   message: string;
-  attachments?: Attachment[];
+  attachments: Attachment[];
   historyMessages: ChatMessages;
   presetMessages: ChatMessages | (() => ChatMessages);
   presetHistoryMessages: ChatMessages;
@@ -860,71 +860,74 @@ class PlanningAgent extends BaseAgent {
   /** TODO: 获取当前plan的总结信息 */
   getMessages() {
     if (this.loading || this.status === "pending" || this.messages.length) {
-      return [];
+      return null;
     }
-
-    const userMessage = this.getUserMessage();
-
-    const historyPresetMessage = this.options.presetHistoryMessages ?? [];
-
-    let userTextMessage;
-    let userMessageRef: any;
-
-    if (typeof userMessage?.content === "string") {
-      userMessageRef = userMessage;
-      userTextMessage = userMessage?.content;
-    } else if (Array.isArray(userMessage?.content)) {
-      const idx = userMessage?.content?.findIndex(
-        (item) => item.type === "text",
-      );
-      userMessageRef = userMessage?.content?.[idx];
-      userTextMessage = userMessage?.content?.[idx].text;
+    let message = "";
+    if (this.options.presetHistoryMessages?.length) {
+      message +=
+        "### 系统信息" +
+        `${this.options.presetHistoryMessages.reduce((pre, cur) => {
+          return pre + `\n${cur.content}`;
+        }, "")}`;
     }
-
-    const setSummaryMessage = (summaryContent: string) => {
-      if (userMessageRef.text) {
-        userMessageRef.text = summaryContent;
-      } else {
-        userMessageRef.content = summaryContent;
-      }
-    };
+    message += "\n\n### 用户消息" + `\n${this.options.message}`;
 
     if (this.commands.length) {
-      let content = "";
-      for (const command of this.commands) {
-        if (command.status === null) {
-          break;
-        }
+      message +=
+        "\n\n### 工具调用记录" +
+        `${this.commands.reduce((pre, command, index) => {
+          if (!command.status) {
+            return pre;
+          }
 
-        content =
-          content +
-          `\n调用工具（${command.tool.name}）\n` +
-          `${command.content.llmLast || command.content.llm || command.content.display}`;
-      }
+          // const isLast = this.commands.length - 1 === index;
 
-      setSummaryMessage(`<历史对话日志>
-  ${historyPresetMessage.reduce((acc, cur) => {
-    return acc + `<系统消息>${cur.content}</系统消息>`;
-  }, "")}
-  <用户消息>${userTextMessage}</用户消息>
-  <你的工具调用记录>
-  ${content}
-  </你的工具调用记录>
-</历史对话日志>`);
-    } else {
-      setSummaryMessage(`<历史对话日志>
-  ${historyPresetMessage.reduce((acc, cur) => {
-    return acc + `<系统消息>${cur.content}</系统消息>`;
-  }, "")}
-  <用户消息>${userTextMessage}</用户消息>
-  <你的返回>
-  ${this.llmContent}
-  </你的返回>
-</历史对话日志>
-`);
+          const [bash, name, params] = command.argv;
+
+          if (command.status === "success") {
+            return (
+              pre +
+              `\n- [x] ${bash} ${name} ${Object.entries(params).reduce(
+                (pre, [key, value]) => {
+                  return pre + `-${key} ${value} `;
+                },
+                "",
+              )}` +
+              // (isLast
+              //   ? `\n${command.content.llmLast || command.content.llm || command.content.display}`
+              //   : "")
+              `\nstdout：${command.content.llmLast || command.content.llm || command.content.display}`
+            );
+          } else if (command.status === "error") {
+            return (
+              pre +
+              `\n- [] ${bash} ${name} ${Object.entries(params).reduce(
+                (pre, [key, value]) => {
+                  return pre + `-${key} ${value} `;
+                },
+                "",
+              )}` +
+              `\nzsh：${command.content.llm || command.content.display}`
+            );
+          }
+          return pre;
+        }, "")}`;
     }
 
-    return [userMessage];
+    message +=
+      "\n\n### 状态" +
+      (this.status === "success"
+        ? `\nsuccess${!this.commands.length ? `：${this.llmContent}` : ""}`
+        : "") +
+      (this.status === "aborted" ? "\naborted：执行中断" : "") +
+      (this.status === "error"
+        ? `\nerror：${this.error?.message.displayContent}`
+        : "");
+
+    return {
+      message,
+      attachments: this.options.attachments,
+    };
   }
 
   /** 安全执行 */

@@ -113,7 +113,7 @@ class Rxai extends BaseAgent {
     const {
       message,
       emits,
-      attachments,
+      attachments = [],
       presetMessages,
       presetHistoryMessages,
       tools,
@@ -123,6 +123,47 @@ class Rxai extends BaseAgent {
       planningCheck,
     } = params;
     const index = this.cacheIndex++;
+
+    const recordAttachements: any[] = [];
+    let historyMessage =
+      "# 历史对话记录" +
+      `\n当前对话历史记录，包含所有历史图片，如果需要图片，根据每一轮对话记录的图片位置进行查询`;
+    let recordIndex = 1;
+
+    this.cacheMessages.forEach((planAgent) => {
+      const messages = planAgent.getMessages();
+      if (messages) {
+        const { message, attachments } = messages;
+
+        historyMessage +=
+          `\n\n## 第${recordIndex++}条对话记录` + `\n\n${message}`;
+        if (attachments.length) {
+          let attachmentIndex = recordAttachements.length;
+          recordAttachements.push(
+            ...attachments.map((attachment) => {
+              return {
+                type: "image_url",
+                image_url: {
+                  url: attachment.content,
+                },
+              };
+            }),
+          );
+
+          historyMessage +=
+            `\n\n### 当前记录携带${attachments.length}个图片` +
+            `\n图片位置：${attachments.reduce((pre) => {
+              return pre + `第${++attachmentIndex}个，`;
+            }, "")}`;
+        }
+      }
+    });
+
+    historyMessage += `\n\n## 历史记录使用规则
+- 仅用于理解上下文，禁止直接引用历史对话原文，包括系统信息、用户消息、工具调用记录。
+- 基于历史意图提供相关且原创的回复。
+- 避免重复历史回复中的具体表述。`;
+
     const planningAgent = new PlanningAgent({
       requestInstance: this.requestInstance,
       tools:
@@ -134,10 +175,20 @@ class Rxai extends BaseAgent {
       system: this.system,
       emits,
       message,
-      historyMessages: this.cacheMessages.slice(-20).reduce((pre, cur) => {
-        pre.push(...cur.getMessages());
-        return pre;
-      }, [] as ChatMessages),
+      historyMessages: [
+        {
+          role: "user",
+          content: recordAttachements.length
+            ? [
+                {
+                  type: "text",
+                  text: historyMessage,
+                },
+                ...recordAttachements,
+              ]
+            : historyMessage,
+        },
+      ],
       attachments,
       presetMessages: presetMessages || [],
       presetHistoryMessages: presetHistoryMessages || [],
