@@ -1,7 +1,7 @@
-import { RxaiError, RxaiErrorMessage, normalizeErrorMessage } from "./base";
+import { RxaiError, normalizeErrorMessage } from "./base";
 
 class RequestError extends RxaiError {
-  constructor(error: string | RxaiErrorMessage) {
+  constructor(error: unknown) {
     super({
       error: normalizeErrorMessage(error),
       type: "request",
