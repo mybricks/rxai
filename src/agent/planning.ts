@@ -25,6 +25,23 @@ interface PlanningAgentOptions extends BaseAgentOptions {
   extension?: unknown;
   idb?: IDB;
   uuid?: string;
+  planningCheck?: (
+    bashCommands: [
+      string,
+      string,
+      {
+        [key: string]: string;
+      },
+    ][],
+  ) =>
+    | [
+        string,
+        string,
+        {
+          [key: string]: string;
+        },
+      ][]
+    | null;
 }
 
 type PlanStatus = "pending" | "success" | "error" | "aborted";
@@ -246,13 +263,23 @@ class PlanningAgent extends BaseAgent {
 
     this.setLlmContent(planningResponse);
 
-    const bashCommands = parseBashCommands(planningResponse);
+    let bashCommands = parseBashCommands(planningResponse);
 
     if (!bashCommands.length) {
       // 说明没有规划
       this.events.emit("summary", planningResponse);
       this.setStatus("success");
     } else {
+      const { planningCheck } = this.options;
+
+      if (planningCheck) {
+        const check = planningCheck(bashCommands);
+        if (!check) {
+          throw new RequestError("规划结果不符合预期");
+        }
+        bashCommands = check;
+      }
+
       this.setCommands(
         bashCommands.map((argv) => {
           return {

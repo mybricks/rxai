@@ -25,19 +25,22 @@ class RxaiError {
 const DEFAULT_ERROR = "未知错误";
 
 const normalizeErrorMessage = (error: any): RxaiErrorOptions["error"] => {
-  const message = error?.message;
-
   let displayContent = DEFAULT_ERROR;
   let llmContent = DEFAULT_ERROR;
 
-  if (typeof message === "string") {
-    displayContent = llmContent = message;
-  } else if (typeof message === "object") {
-    if (message.displayContent) {
-      displayContent = message.displayContent;
-    }
-    if (message.llmContent) {
-      llmContent = message.llmContent;
+  if (typeof error === "string") {
+    displayContent = llmContent = error;
+  } else {
+    const message = error?.message;
+    if (typeof message === "string") {
+      displayContent = llmContent = message;
+    } else if (typeof message === "object") {
+      if (message.displayContent) {
+        displayContent = message.displayContent;
+      }
+      if (message.llmContent) {
+        llmContent = message.llmContent;
+      }
     }
   }
 

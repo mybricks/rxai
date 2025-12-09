@@ -20,6 +20,23 @@ interface RequestParams {
   planList?: string[];
   enableLog?: boolean;
   extension?: unknown;
+  planningCheck?: (
+    bashCommands: [
+      string,
+      string,
+      {
+        [key: string]: string;
+      },
+    ][],
+  ) =>
+    | [
+        string,
+        string,
+        {
+          [key: string]: string;
+        },
+      ][]
+    | null;
 }
 
 interface RxaiOptions {
@@ -103,6 +120,7 @@ class Rxai extends BaseAgent {
       planList,
       enableLog,
       extension,
+      planningCheck,
     } = params;
     const index = this.cacheIndex++;
     const planningAgent = new PlanningAgent({
@@ -127,6 +145,7 @@ class Rxai extends BaseAgent {
       enableLog: typeof enableLog === "boolean" ? enableLog : this.enableLog,
       extension,
       idb: this.idb,
+      planningCheck,
     });
 
     this.cacheMessages[index] = planningAgent;
