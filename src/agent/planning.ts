@@ -141,6 +141,10 @@ class PlanningAgent extends BaseAgent {
 
   enableRetry: boolean = true;
 
+  get id() {
+    return this.uuid;
+  }
+
   /** 开始执行 */
   async run() {
     // 记录开始时间
