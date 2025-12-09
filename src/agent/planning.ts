@@ -21,6 +21,7 @@ interface PlanningAgentOptions extends BaseAgentOptions {
   historyMessages: ChatMessages;
   presetMessages: ChatMessages | (() => ChatMessages);
   presetHistoryMessages: ChatMessages;
+  formatUserMessage?: (msg: any) => any;
   planList?: string[];
   extension?: unknown;
   idb?: IDB;
@@ -618,6 +619,42 @@ class PlanningAgent extends BaseAgent {
     };
   }
 
+  private formatUserMessage(
+    userMessage: any,
+    formatFunction: (msg: string) => string,
+  ) {
+    let userTextMessage;
+    let newUserMessage;
+
+    // 提取用户消息内容并创建新的消息对象
+    if (typeof userMessage?.content === "string") {
+      newUserMessage = { ...userMessage };
+      userTextMessage = userMessage.content;
+    } else if (Array.isArray(userMessage?.content)) {
+      newUserMessage = {
+        ...userMessage,
+        content: [...userMessage.content],
+      };
+      const idx = userMessage.content.findIndex((item) => item.type === "text");
+      userTextMessage = userMessage.content[idx]?.text;
+    }
+
+    // 通过format函数处理文本内容
+    const formattedText = formatFunction(userTextMessage);
+
+    // 将格式化后的内容塞回新消息对象
+    if (typeof userMessage?.content === "string") {
+      newUserMessage.content = formattedText;
+    } else if (Array.isArray(userMessage?.content)) {
+      const idx = userMessage.content.findIndex((item) => item.type === "text");
+      if (idx !== -1) {
+        newUserMessage.content[idx].text = formattedText;
+      }
+    }
+
+    return newUserMessage;
+  }
+
   /** 获取对话消息列表 */
   private getLLMMessages(params: { start?: ChatMessages; end?: ChatMessages }) {
     const { options } = this;
@@ -628,7 +665,12 @@ class PlanningAgent extends BaseAgent {
       ...(typeof options.presetMessages === "function"
         ? options.presetMessages()
         : options.presetMessages),
-      this.getUserMessage(),
+      typeof options.formatUserMessage === "function"
+        ? this.formatUserMessage(
+            this.getUserMessage(),
+            options.formatUserMessage,
+          )
+        : this.getUserMessage(),
     ];
 
     let toolMessage = "";
@@ -668,7 +710,7 @@ class PlanningAgent extends BaseAgent {
               ? `\nzsh: ${this.error.message.llmContent}` +
                 "\n\n执行命令报错，请重试。"
               : "\n请") +
-            "根据系统提示词的工具描述、当前聚焦元素、和最近的用户需求提供输出。";
+            "根据系统提示词的工具描述提供输出。";
         }
       }
 
