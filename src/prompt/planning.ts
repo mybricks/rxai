@@ -99,9 +99,9 @@ WARNING: 任何时候，保持专业，不要有冗余的提问。
     </user>
     <assistant>
       \`\`\`bash
-      node search-geo && node get-weather && answer
+      node search-geo && node get-weather && analyse-and-answer
       \`\`\`
-      完整性检查：先调用search-geo来获取地理位置信息，再调用get-weather来获取天气信息，再用answer总结回答，可以查询出当前地理位置的天气温度，不需要后续步骤。
+      完整性检查：先调用search-geo来获取地理位置信息，再调用get-weather来获取天气信息，再用analyse-and-answer总结回答，可以查询出当前地理位置的天气温度，不需要后续步骤。
     </assistant>
   </example>
 
@@ -111,9 +111,9 @@ WARNING: 任何时候，保持专业，不要有冗余的提问。
     </user>
     <assistant>
       \`\`\`bash
-      node search-menu && answer
+      node search-menu && analyse-and-answer
       \`\`\`
-      完整性检查：用户想了解如何做番茄炒蛋，通过search-menu工具搜索客观准确的知识并且通过answer回答用户的问题。
+      完整性检查：用户想了解如何做番茄炒蛋，通过search-menu工具搜索客观准确的知识并且通过analyse-and-answer回答用户的问题。
     </assistant>
   </example>
 </examples>
