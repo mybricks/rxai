@@ -405,7 +405,7 @@ class PlanningAgent extends BaseAgent {
     last: boolean,
   ) {
     const { argv } = command;
-    const [, name, params] = argv;
+    const [, name, params = {}] = argv;
 
     // 已经前置校验过工具合法性，所以tool一定是有的
     const tool = this.options.tools.find((tool) => {
@@ -687,7 +687,7 @@ class PlanningAgent extends BaseAgent {
         }
 
         const { argv } = command;
-        const [bash, name, params] = argv;
+        const [bash, name, params = {}] = argv;
         const success = command.status === "success";
         toolMessage +=
           `\n- [${success ? "x" : " "}] ${bash} ${name} ${Object.entries(
@@ -924,7 +924,7 @@ class PlanningAgent extends BaseAgent {
 
           // const isLast = this.commands.length - 1 === index;
 
-          const [bash, name, params] = command.argv;
+          const [bash, name, params = {}] = command.argv;
 
           if (command.status === "success") {
             return (
