@@ -41,7 +41,6 @@ const requestAI = (params: RequestParams) => {
     if (tool) {
       tool.execute({
         files: parseFileBlocks(mock.result),
-        key: mock.key,
         content: mock.result,
       });
     } else {
