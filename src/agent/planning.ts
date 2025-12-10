@@ -635,7 +635,9 @@ class PlanningAgent extends BaseAgent {
         ...userMessage,
         content: [...userMessage.content],
       };
-      const idx = userMessage.content.findIndex((item) => item.type === "text");
+      const idx = userMessage.content.findIndex(
+        (item: any) => item.type === "text",
+      );
       userTextMessage = userMessage.content[idx]?.text;
     }
 
@@ -646,7 +648,9 @@ class PlanningAgent extends BaseAgent {
     if (typeof userMessage?.content === "string") {
       newUserMessage.content = formattedText;
     } else if (Array.isArray(userMessage?.content)) {
-      const idx = userMessage.content.findIndex((item) => item.type === "text");
+      const idx = userMessage.content.findIndex(
+        (item: any) => item.type === "text",
+      );
       if (idx !== -1) {
         newUserMessage.content[idx].text = formattedText;
       }

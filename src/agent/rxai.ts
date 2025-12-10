@@ -37,6 +37,7 @@ interface RequestParams {
         },
       ][]
     | null;
+  formatUserMessage?: (userMessage: string) => string;
 }
 
 interface RxaiOptions {
