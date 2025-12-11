@@ -336,10 +336,7 @@ class PlanningAgent extends BaseAgent {
         async () =>
           await retry(
             () => {
-              return this.executeCommand(
-                command,
-                index === commands.length - 1,
-              );
+              return this.executeCommand(command);
             },
             this.requestInstance.maxRetries, // 暂时都用request配置的maxRetries
             (error) => {
@@ -399,11 +396,7 @@ class PlanningAgent extends BaseAgent {
    * 执行命令
    * 目前均为node命令，后续可能扩展
    */
-  private async executeCommand(
-    command: PlanningAgent["commands"][number],
-    /** 最后一条命令 */
-    last: boolean,
-  ) {
+  private async executeCommand(command: PlanningAgent["commands"][number]) {
     const { argv } = command;
     const [, name, params = {}] = argv;
 
@@ -522,46 +515,6 @@ class PlanningAgent extends BaseAgent {
         }),
         { response },
       );
-    }
-
-    if (last) {
-      // 最后一项
-      if (tool.lastAppendMessage) {
-        // 工具执行完成后需要默认再调用一次请求
-        const llmMessages = this.getLLMMessages({
-          start: [
-            {
-              role: "system",
-              content:
-                getToolPrompt(tool, {
-                  attachments: this.options.attachments,
-                }) || "请根据最新消息，回答用户问题",
-            },
-          ],
-          end: [
-            {
-              role: "user",
-              content: tool.lastAppendMessage,
-            },
-          ],
-        });
-
-        const response = await this.request({
-          messages: llmMessages,
-          emits: this.getEmits({
-            write: (chunk) => {
-              this.events.emit("streamMessage", chunk);
-            },
-          }),
-          aiRole: tool.aiRole,
-        });
-
-        if (response instanceof RxaiError) {
-          throw response;
-        }
-
-        content.llmLast = response;
-      }
     }
 
     return content;
