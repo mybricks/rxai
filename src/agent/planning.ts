@@ -17,7 +17,7 @@ interface PlanningAgentOptions extends BaseAgentOptions {
   emits: Emits;
   tools: Tool[];
   message: string;
-  attachments: Attachment[];
+  attachments?: Attachment[];
   historyMessages: ChatMessages;
   presetMessages: ChatMessages | (() => ChatMessages);
   presetHistoryMessages: ChatMessages;
