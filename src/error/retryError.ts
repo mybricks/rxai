@@ -1,9 +1,14 @@
 import { RxaiError, RxaiErrorMessage, normalizeErrorMessage } from "./base";
 
+interface RetryMessage {
+  displayContent: string;
+  llmContent: string;
+}
+
 class RetryError extends RxaiError {
-  constructor(error: string | RxaiErrorMessage) {
+  constructor(error: RetryMessage) {
     super({
-      error: normalizeErrorMessage(error),
+      error,
       type: "retry",
     });
   }

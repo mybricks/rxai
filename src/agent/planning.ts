@@ -677,6 +677,13 @@ class PlanningAgent extends BaseAgent {
       });
     }
 
+    if (this.error instanceof RetryError) {
+      messages.push({
+        role: "user",
+        content: `上次规划出错，错误信息为 ${this.error?.error?.llmContent}，请基于用户消息重新规划。`,
+      });
+    }
+
     // for (const command of this.commands) {
     //   if (command.status === null) {
     //     break;
@@ -920,7 +927,7 @@ class PlanningAgent extends BaseAgent {
         : "") +
       (this.status === "aborted" ? "\naborted：执行中断" : "") +
       (this.status === "error"
-        ? `\nerror：${this.error?.message.displayContent}`
+        ? `\nerror：${this.error?.message.llmContent}`
         : "");
 
     return {
@@ -980,7 +987,7 @@ class PlanningAgent extends BaseAgent {
         this.setCommands([], true);
       }
 
-      this.setError(null);
+      // this.setError(null);
     }
 
     await this.start();
