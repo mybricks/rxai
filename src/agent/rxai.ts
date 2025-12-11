@@ -139,7 +139,7 @@ class Rxai extends BaseAgent {
 
         historyMessage +=
           `\n\n## 第${recordIndex++}条对话记录` + `\n\n${message}`;
-        if (attachments.length) {
+        if (attachments?.length) {
           let attachmentIndex = recordAttachements.length;
           recordAttachements.push(
             ...attachments.map((attachment) => {
