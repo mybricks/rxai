@@ -33,10 +33,12 @@ interface Tool {
     files: Files;
     content: string;
     params?: { [key: string]: string };
+    replaceContent: string;
   }) => string | { displayContent: string; llmContent: string };
   stream?: (params: {
     files: Files;
     status: "start" | "ing" | "complete";
+    replaceContent: string;
   }) => void;
   streamThoughts?: boolean;
   /** TODO: 当配置该字段，且是最后一个工具时，再发起一次请求 */

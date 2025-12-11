@@ -58,6 +58,7 @@ type EventsKV = {
   loading: boolean;
   userFriendlyMessages: any[];
   streamMessage: string;
+  streamMessage2: string;
   userMessage: ReturnType<PlanningAgent["getUserMessage"]>;
   startTime: number;
   summary: string;
@@ -454,6 +455,7 @@ class PlanningAgent extends BaseAgent {
           params,
           files: [],
           content: "",
+          replaceContent: "",
         }),
       );
     } else {
@@ -686,7 +688,8 @@ class PlanningAgent extends BaseAgent {
     if (this.error instanceof RetryError) {
       messages.push({
         role: "user",
-        content: `上次规划出错，错误信息为 ${this.error?.error?.llmContent}，请基于用户消息重新规划。`,
+        // @ts-ignore
+        content: `上次规划出错，错误信息为 ${(this.error?.error || this.error?.message)?.llmContent}，请基于用户消息重新规划。`,
       });
     }
 
