@@ -7,6 +7,8 @@ export function parseFileBlocks(content: string) {
   const results = [];
   let currentIndex = 0;
 
+  let resultContent = content;
+
   while (currentIndex < content.length) {
     // 查找代码块开始标记，支持多种格式：
     // 1. ```language file="filename"
@@ -100,6 +102,24 @@ export function parseFileBlocks(content: string) {
       }
     }
 
+    let startIndex = -1;
+
+    if (startMatch) {
+      startIndex = startMatch.index;
+    }
+
+    let endIndex = undefined;
+    if (endMatch) {
+      endIndex = endMatch.index;
+    }
+
+    if (startIndex !== -1) {
+      resultContent = resultContent.replace(
+        resultContent.slice(startIndex, currentIndex),
+        fileName,
+      );
+    }
+
     results.push({
       fileName: finalFileName,
       name: name,
@@ -110,5 +130,20 @@ export function parseFileBlocks(content: string) {
     });
   }
 
-  return results;
+  // 去除所有可能的代码块（包括不完整的，适配流式返回）
+  // 1. 匹配完整的代码块：```...```
+  // 2. 匹配不完整的代码块开始：```...（到字符串末尾）
+  // 3. 清理剩余的单独的反引号：` 或 `` 或 ```
+  const cleanedContent = resultContent
+    // 先匹配完整的代码块（从 ``` 到 ```，非贪婪匹配）
+    .replace(/```[\s\S]*?```/g, "")
+    // 再匹配不完整的代码块开始（从 ``` 到字符串末尾）
+    .replace(/```[\s\S]*$/g, "")
+    // 最后清理可能残留的单独反引号（1-3个连续的 `）
+    .replace(/`{1,3}/g, "");
+
+  return {
+    content: cleanedContent,
+    files: results,
+  };
 }

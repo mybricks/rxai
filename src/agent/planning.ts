@@ -461,10 +461,15 @@ class PlanningAgent extends BaseAgent {
 
       const stream = tool.stream
         ? (content: string, status: "start" | "ing" | "complete") => {
-            tool.stream!({
-              files: parseFileBlocks(content),
+            const { content: replaceContent, files } = parseFileBlocks(content);
+            const res = tool.stream!({
+              files,
               status,
+              replaceContent,
             });
+            if (typeof res === "string") {
+              this.events.emit("streamMessage2", res);
+            }
           }
         : null;
 
@@ -504,7 +509,7 @@ class PlanningAgent extends BaseAgent {
       }
 
       // 解析文件
-      const files = parseFileBlocks(response);
+      const { files, content: replaceContent } = parseFileBlocks(response);
 
       Object.assign(
         content,
@@ -512,6 +517,7 @@ class PlanningAgent extends BaseAgent {
           params,
           files,
           content: response,
+          replaceContent,
         }),
         { response },
       );
