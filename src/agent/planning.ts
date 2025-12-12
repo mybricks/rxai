@@ -58,6 +58,7 @@ type EventsKV = {
   loading: boolean;
   userFriendlyMessages: any[];
   streamMessage: string;
+  streamMessage2: string;
   userMessage: ReturnType<PlanningAgent["getUserMessage"]>;
   startTime: number;
   summary: string;
@@ -95,6 +96,7 @@ class PlanningAgent extends BaseAgent {
       llmLast: string;
       response: string;
     };
+    events?: Events<{ streamMessage: { message: string; status: string } }>;
   }[] = [];
 
   private defaultPlanList = false;
@@ -223,10 +225,23 @@ class PlanningAgent extends BaseAgent {
     this.events.emit("loading", loading);
   }
   private setCommands(commands: PlanningAgent["commands"], sync: boolean) {
-    this.commands = commands;
+    this.commands = commands.map((command) => {
+      if (!command.events) {
+        command.events = new Events();
+      }
+      return {
+        ...command,
+      };
+    });
     this.events.emit("commands", commands);
     if (sync) {
-      this.idbPubContent("commands", commands);
+      this.idbPubContent(
+        "commands",
+        commands.map((command) => {
+          const { events, ...other } = command;
+          return other;
+        }),
+      );
     }
   }
   private idbPubContent(type: string, content: any) {
@@ -383,10 +398,10 @@ class PlanningAgent extends BaseAgent {
           // 所有工具都执行完成，设置完成状态
           this.setStatus("success");
 
-          this.events.emit(
-            "summary",
-            command.content.llmLast || command.content.display,
-          );
+          // this.events.emit(
+          //   "summary",
+          //   command.content.llmLast || command.content.display,
+          // );
         }
       }
     }
@@ -454,6 +469,7 @@ class PlanningAgent extends BaseAgent {
           params,
           files: [],
           content: "",
+          replaceContent: "",
         }),
       );
     } else {
@@ -468,10 +484,19 @@ class PlanningAgent extends BaseAgent {
               replaceContent,
             });
             if (typeof res === "string") {
-              this.events.emit("streamMessage2", res);
+              // this.events.emit("streamMessage2", res);
+              command.events?.emit("streamMessage", {
+                message: res,
+                status,
+              });
             }
           }
-        : null;
+        : (content: string, status: "start" | "ing" | "complete") => {
+            command.events?.emit("streamMessage", {
+              message: content,
+              status,
+            });
+          };
 
       stream?.("", "start");
 
@@ -490,12 +515,19 @@ class PlanningAgent extends BaseAgent {
         messages: llmMessages,
         emits: this.getEmits({
           write: (chunk) => {
-            if (tool.streamThoughts) {
-              this.events.emit("streamMessage", chunk);
-            }
+            // if (tool.streamThoughts) {
+            //   this.events.emit("streamMessage", chunk);
+            // }
 
             streamMessage += chunk;
             stream?.(streamMessage, "ing");
+            // if (!stream) {
+            //   command.events?.emit("streamMessage", {
+            //     message: streamMessage,
+            //     status: "ing",
+            //   });
+            //   this.events.emit("streamMessage", chunk);
+            // }
           },
           complete: (content) => {
             stream?.(content, "complete");
@@ -686,7 +718,8 @@ class PlanningAgent extends BaseAgent {
     if (this.error instanceof RetryError) {
       messages.push({
         role: "user",
-        content: `上次规划出错，错误信息为 ${this.error?.error?.llmContent}，请基于用户消息重新规划。`,
+        // @ts-ignore
+        content: `上次规划出错，错误信息为 ${(this.error?.error || this.error?.message)?.llmContent}，请基于用户消息重新规划。`,
       });
     }
 
@@ -852,12 +885,12 @@ class PlanningAgent extends BaseAgent {
         this.events.emit("summary", "已取消");
       } else if (commands.length) {
         const command = commands[commands.length - 1];
-        this.events.emit(
-          "summary",
-          command.content.llmLast ||
-            command.content.display ||
-            command.content.llm,
-        );
+        // this.events.emit(
+        //   "summary",
+        //   command.content.llmLast ||
+        //     command.content.display ||
+        //     command.content.llm,
+        // );
       } else {
         this.events.emit("summary", this.llmContent);
       }
