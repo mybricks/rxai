@@ -84,14 +84,15 @@ class Rxai extends BaseAgent {
           //   pre.push(...cur.getMessages());
           //   return pre;
           // }, [] as ChatMessages),
-          historyMessages: [],
+          historyMessages: () => this.getHistoryMessages(),
           attachments: plan.content.attachments,
           presetMessages: plan.content.presetMessages,
           presetHistoryMessages: plan.content.presetHistoryMessages,
           // planList: plan.plan.content.planList,
           // enableLog: true,
           extension: plan.content.extension,
-          // idb: this.idb,
+          uuid: plan.content.uuid,
+          idb: this.idb,
         });
 
         planAgent.recover(content);
@@ -126,6 +127,55 @@ class Rxai extends BaseAgent {
     } = params;
     const index = this.cacheIndex++;
 
+    const planningAgent = new PlanningAgent({
+      requestInstance: this.requestInstance,
+      tools:
+        tools ||
+        Object.entries(this.scenes).reduce((pre, [, value]) => {
+          pre.push(...value.tools);
+          return pre;
+        }, [] as Tool[]),
+      system: this.system,
+      emits,
+      message,
+      historyMessages: () => {
+        return this.getHistoryMessages();
+      },
+      formatUserMessage,
+      attachments,
+      presetMessages: presetMessages || [],
+      presetHistoryMessages: presetHistoryMessages || [],
+      planList,
+      enableLog: typeof enableLog === "boolean" ? enableLog : this.enableLog,
+      extension,
+      idb: this.idb,
+      planningCheck,
+    });
+
+    this.cacheMessages[index] = planningAgent;
+
+    this.events.emit("plan", this.cacheMessages);
+
+    this.idb?.addPlan(planningAgent);
+
+    await planningAgent.run();
+  }
+
+  async clear() {
+    this.cacheMessages = [];
+    this.cacheIndex = 0;
+    this.events.emit("plan", this.cacheMessages);
+
+    this.idb?.clear();
+  }
+
+  export() {
+    return this.cacheMessages.map((planAgent) => {
+      return planAgent.export();
+    });
+  }
+
+  getHistoryMessages() {
     const recordAttachements: any[] = [];
     let historyMessage =
       "# 历史对话记录" +
@@ -166,63 +216,20 @@ class Rxai extends BaseAgent {
 - 基于历史意图提供相关且原创的回复。
 - 避免重复历史回复中的具体表述。`;
 
-    const planningAgent = new PlanningAgent({
-      requestInstance: this.requestInstance,
-      tools:
-        tools ||
-        Object.entries(this.scenes).reduce((pre, [, value]) => {
-          pre.push(...value.tools);
-          return pre;
-        }, [] as Tool[]),
-      system: this.system,
-      emits,
-      message,
-      historyMessages: [
-        {
-          role: "user",
-          content: recordAttachements.length
-            ? [
-                {
-                  type: "text",
-                  text: historyMessage,
-                },
-                ...recordAttachements,
-              ]
-            : historyMessage,
-        },
-      ],
-      formatUserMessage,
-      attachments,
-      presetMessages: presetMessages || [],
-      presetHistoryMessages: presetHistoryMessages || [],
-      planList,
-      enableLog: typeof enableLog === "boolean" ? enableLog : this.enableLog,
-      extension,
-      idb: this.idb,
-      planningCheck,
-    });
-
-    this.cacheMessages[index] = planningAgent;
-
-    this.events.emit("plan", this.cacheMessages);
-
-    this.idb?.addPlan(planningAgent);
-
-    await planningAgent.run();
-  }
-
-  async clear() {
-    this.cacheMessages = [];
-    this.cacheIndex = 0;
-    this.events.emit("plan", this.cacheMessages);
-
-    this.idb?.clear();
-  }
-
-  export() {
-    return this.cacheMessages.map((planAgent) => {
-      return planAgent.export();
-    });
+    return [
+      {
+        role: "user",
+        content: recordAttachements.length
+          ? [
+              {
+                type: "text",
+                text: historyMessage,
+              },
+              ...recordAttachements,
+            ]
+          : historyMessage,
+      },
+    ];
   }
 }
 

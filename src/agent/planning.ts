@@ -18,7 +18,7 @@ interface PlanningAgentOptions extends BaseAgentOptions {
   tools: Tool[];
   message: string;
   attachments?: Attachment[];
-  historyMessages: ChatMessages;
+  historyMessages: () => ChatMessages;
   presetMessages: ChatMessages | (() => ChatMessages);
   presetHistoryMessages: ChatMessages;
   formatUserMessage?: (msg: any) => any;
@@ -161,6 +161,8 @@ class PlanningAgent extends BaseAgent {
 
   enableRetry: boolean = true;
 
+  private summaryMessage: string = "";
+
   get id() {
     return this.uuid;
   }
@@ -205,6 +207,8 @@ class PlanningAgent extends BaseAgent {
     } else if (this.status === "error") {
       this.options.emits.error("");
     }
+
+    this.summary();
   }
 
   /** 设置需缓存的值 */
@@ -656,7 +660,7 @@ class PlanningAgent extends BaseAgent {
     const { start, end } = params;
 
     const messages = [
-      ...options.historyMessages,
+      ...options.historyMessages(),
       ...(typeof options.presetMessages === "function"
         ? options.presetMessages()
         : options.presetMessages),
@@ -895,6 +899,8 @@ class PlanningAgent extends BaseAgent {
         this.events.emit("summary", this.llmContent);
       }
     }
+
+    this.summary();
   }
 
   /** 获取扩展参数 */
@@ -906,6 +912,14 @@ class PlanningAgent extends BaseAgent {
   getMessages() {
     if (this.loading || this.status === "pending" || this.messages.length) {
       return null;
+    }
+    if (this.summaryMessage) {
+      return {
+        message: this.summaryMessage,
+        attachments: this.options.attachments,
+      };
+    } else {
+      this.summary();
     }
     let message = "";
     if (this.options.presetHistoryMessages?.length) {
@@ -1060,6 +1074,87 @@ class PlanningAgent extends BaseAgent {
       llmContent: this.llmContent,
       startTime: this.startTime,
       status: this.status,
+      summaryMessage: this.summaryMessage,
+    };
+  }
+
+  private summaryLoading = false;
+
+  summary() {
+    if (this.summaryLoading) {
+      return;
+    }
+    if (this.summaryMessage) {
+      return;
+    }
+    this.summaryLoading = true;
+    const historyMessage = this.getMessages();
+
+    if (!historyMessage) {
+      return;
+    }
+
+    const { message } = historyMessage;
+
+    this.requestInstance
+      .requestAsStream({
+        messages: [
+          {
+            role: "system",
+            content: `请对以下对话历史记录进行**专业摘要**，提取核心操作与结果，语言精炼，适合存档和快速查阅。
+
+---
+
+**摘要要求：**
+1. **用户意图**：用一句话总结用户的原始指令或请求。
+2. **关键操作**：列出执行的主要动作（工具调用和重要修改）。
+3. **执行结果**：概括任务执行的关键产出或变化。
+4. **最终状态**：说明任务完成情况。
+
+---
+
+**输出格式示例：**
+\`\`\`
+【用户意图】用户希望实现某个具体目标。
+【关键操作】调用了工具A和B。
+【执行结果】产生了Z变化或达成了W效果。
+【最终状态】成功完成/部分完成/失败。
+\`\`\`
+
+---
+
+请根据以上要求，直接给出清晰、简明的摘要结果。`,
+          },
+          {
+            role: "user",
+            content: `<对话历史记录>
+${message}
+</对话历史记录>`,
+          },
+        ],
+        emits: {
+          write() {},
+          cancel() {},
+          error() {},
+          complete() {},
+        },
+      })
+      .then((res) => {
+        if (res.type === "complete") {
+          this.summaryMessage = res.content;
+          this.idbPubContent("summaryMessage", res.content);
+        }
+      })
+      .catch((e) => {
+        console.error(e);
+      })
+      .finally(() => {
+        this.summaryLoading = false;
+      });
+
+    return {
+      message,
+      attachments: this.options.attachments,
     };
   }
 }
