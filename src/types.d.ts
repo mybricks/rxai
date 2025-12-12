@@ -29,7 +29,7 @@ interface Tool {
   displayName: string;
   getPrompts?: (params: { attachments?: Attachment[] }) => string;
   aiRole?: "image" | "architect" | "expert";
-  execute: (params?: {
+  execute: (params: {
     files: Files;
     content: string;
     params?: { [key: string]: string };
@@ -41,8 +41,6 @@ interface Tool {
     replaceContent: string;
   }) => void;
   streamThoughts?: boolean;
-  /** TODO: 当配置该字段，且是最后一个工具时，再发起一次请求 */
-  lastAppendMessage?: string;
 }
 
 /** TODO: 环境？可以去除 */

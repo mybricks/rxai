@@ -3,6 +3,7 @@ import { PlanningAgent } from "../agent/planning";
 import { Request, RequestOptions } from "../request/request";
 import { Events } from "../utils/events";
 import { IDB } from "../utils/idb";
+import { getHistoryRecords } from "../tool/getHistoryRecords";
 
 interface RegisterParams {
   name: string;
@@ -50,6 +51,7 @@ interface RxaiOptions {
 class Rxai extends BaseAgent {
   private cacheMessages: PlanningAgent[] = [];
   private cacheIndex: number = 0;
+  fileNameMap: any = {};
   private idb?: IDB;
 
   events = new Events<{
@@ -84,7 +86,7 @@ class Rxai extends BaseAgent {
           //   pre.push(...cur.getMessages());
           //   return pre;
           // }, [] as ChatMessages),
-          historyMessages: () => this.getHistoryMessages(),
+          historyMessages: (h) => this.getHistoryMessages(h),
           attachments: plan.content.attachments,
           presetMessages: plan.content.presetMessages,
           presetHistoryMessages: plan.content.presetHistoryMessages,
@@ -98,6 +100,10 @@ class Rxai extends BaseAgent {
         planAgent.recover(content);
 
         this.cacheMessages.push(planAgent);
+        this.fileNameMap[`history${this.cacheMessages.length}.md`] = {
+          index: this.cacheMessages.length,
+          planningAgent: planAgent,
+        };
       });
 
       if (this.cacheMessages.length) {
@@ -129,17 +135,18 @@ class Rxai extends BaseAgent {
 
     const planningAgent = new PlanningAgent({
       requestInstance: this.requestInstance,
-      tools:
+      tools: [getHistoryRecords(this)].concat(
         tools ||
-        Object.entries(this.scenes).reduce((pre, [, value]) => {
-          pre.push(...value.tools);
-          return pre;
-        }, [] as Tool[]),
+          Object.entries(this.scenes).reduce((pre, [, value]) => {
+            pre.push(...value.tools);
+            return pre;
+          }, [] as Tool[]),
+      ),
       system: this.system,
       emits,
       message,
-      historyMessages: () => {
-        return this.getHistoryMessages();
+      historyMessages: (h) => {
+        return this.getHistoryMessages(h);
       },
       formatUserMessage,
       attachments,
@@ -151,7 +158,10 @@ class Rxai extends BaseAgent {
       idb: this.idb,
       planningCheck,
     });
-
+    this.fileNameMap[`history${this.cacheIndex}.md`] = {
+      index: this.cacheIndex,
+      planningAgent,
+    };
     this.cacheMessages[index] = planningAgent;
 
     this.events.emit("plan", this.cacheMessages);
@@ -175,20 +185,32 @@ class Rxai extends BaseAgent {
     });
   }
 
-  getHistoryMessages() {
+  getHistoryMessages(history: any) {
     const recordAttachements: any[] = [];
     let historyMessage =
       "# 历史对话记录" +
       `\n当前对话历史记录，包含所有历史图片，如果需要图片，根据每一轮对话记录的图片位置进行查询`;
     let recordIndex = 1;
 
-    this.cacheMessages.forEach((planAgent) => {
+    this.cacheMessages.forEach((planAgent, index) => {
       const messages = planAgent.getMessages();
       if (messages) {
-        const { message, attachments } = messages;
+        const { message, attachments, summaryMessage } = messages;
+
+        let nextMessage = summaryMessage || message;
+        let expend = "完整记录";
+        if (summaryMessage) {
+          expend = "摘要";
+        }
+        if (history[planAgent.id]) {
+          nextMessage = message;
+          expend = "完整记录";
+        }
 
         historyMessage +=
-          `\n\n## 第${recordIndex++}条对话记录` + `\n\n${message}`;
+          `\n\n## 第${recordIndex++}条对话记录` +
+          `\n${expend} 文件名：history${index + 1}.md` +
+          `\n\n${nextMessage}`;
         if (attachments?.length) {
           let attachmentIndex = recordAttachements.length;
           recordAttachements.push(

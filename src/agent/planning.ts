@@ -18,7 +18,7 @@ interface PlanningAgentOptions extends BaseAgentOptions {
   tools: Tool[];
   message: string;
   attachments?: Attachment[];
-  historyMessages: () => ChatMessages;
+  historyMessages: (history: any) => ChatMessages;
   presetMessages: ChatMessages | (() => ChatMessages);
   presetHistoryMessages: ChatMessages;
   formatUserMessage?: (msg: any) => any;
@@ -98,6 +98,7 @@ class PlanningAgent extends BaseAgent {
     };
     events?: Events<{ streamMessage: { message: string; status: string } }>;
   }[] = [];
+  private toolHistory: { [key: string]: PlanningAgent } = {};
 
   private defaultPlanList = false;
 
@@ -271,6 +272,7 @@ class PlanningAgent extends BaseAgent {
               prompt: this.system.prompt,
             }),
           },
+          ...this.getHistoryMessages(),
         ],
       }),
       emits: this.getEmits(),
@@ -298,6 +300,13 @@ class PlanningAgent extends BaseAgent {
           throw new RequestError("规划结果不符合预期");
         }
         bashCommands = check;
+      }
+
+      if (
+        bashCommands.length === 1 &&
+        bashCommands[0][1] === "get-history-records"
+      ) {
+        bashCommands.push(["node", "analyse-and-answer", {}]);
       }
 
       this.setCommands(
@@ -443,6 +452,11 @@ class PlanningAgent extends BaseAgent {
       params: Parameters<Tool["execute"]>[0],
     ) => {
       const [error, response] = await this.tryCatch(() => {
+        if (tool.name === "get-history-records") {
+          // @ts-ignore
+          this.toolHistory = tool.execute(params);
+          return "已读取历史对话记录";
+        }
         return tool.execute(params);
       });
 
@@ -512,6 +526,7 @@ class PlanningAgent extends BaseAgent {
               attachments: this.options.attachments,
             }),
           },
+          ...this.getHistoryMessages(this.toolHistory),
         ],
       });
 
@@ -660,7 +675,6 @@ class PlanningAgent extends BaseAgent {
     const { start, end } = params;
 
     const messages = [
-      ...options.historyMessages(),
       ...(typeof options.presetMessages === "function"
         ? options.presetMessages()
         : options.presetMessages),
@@ -913,12 +927,8 @@ class PlanningAgent extends BaseAgent {
     if (this.loading || this.status === "pending" || this.messages.length) {
       return null;
     }
-    if (this.summaryMessage) {
-      return {
-        message: this.summaryMessage,
-        attachments: this.options.attachments,
-      };
-    } else {
+
+    if (!this.summaryMessage) {
       this.summary();
     }
     let message = "";
@@ -985,6 +995,7 @@ class PlanningAgent extends BaseAgent {
 
     return {
       message,
+      summaryMessage: this.summaryMessage,
       attachments: this.options.attachments,
     };
   }
@@ -1157,6 +1168,10 @@ ${message}
       attachments: this.options.attachments,
     };
   }
+
+  getHistoryMessages = (history: any = {}) => {
+    return this.options.historyMessages(history);
+  };
 }
 
 export { PlanningAgent };
