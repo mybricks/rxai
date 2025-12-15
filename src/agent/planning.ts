@@ -93,7 +93,6 @@ class PlanningAgent extends BaseAgent {
     content: {
       llm: string;
       display: string;
-      llmLast: string;
       response: string;
     };
     events?: Events<{ streamMessage: { message: string; status: string } }>;
@@ -133,7 +132,6 @@ class PlanningAgent extends BaseAgent {
             content: {
               llm: "",
               display: "",
-              llmLast: "",
               response: "",
             },
           };
@@ -310,7 +308,6 @@ class PlanningAgent extends BaseAgent {
             content: {
               llm: "",
               display: "",
-              llmLast: "",
               response: "",
             },
           };
@@ -400,7 +397,7 @@ class PlanningAgent extends BaseAgent {
 
           // this.events.emit(
           //   "summary",
-          //   command.content.llmLast || command.content.display,
+          //   command.content.display,
           // );
         }
       }
@@ -430,7 +427,6 @@ class PlanningAgent extends BaseAgent {
     const content = {
       llm: "",
       display: "",
-      llmLast: "",
       response: "",
     };
 
@@ -450,13 +446,11 @@ class PlanningAgent extends BaseAgent {
         return {
           llm: response,
           display: response,
-          llmLast: "",
         };
       } else {
         return {
           llm: response.llmContent,
           display: response.displayContent,
-          llmLast: "",
         };
       }
     };
@@ -520,6 +514,7 @@ class PlanningAgent extends BaseAgent {
             // }
 
             streamMessage += chunk;
+            command.content.response = streamMessage;
             stream?.(streamMessage, "ing");
             // if (!stream) {
             //   command.events?.emit("streamMessage", {
@@ -887,7 +882,6 @@ class PlanningAgent extends BaseAgent {
         const command = commands[commands.length - 1];
         // this.events.emit(
         //   "summary",
-        //   command.content.llmLast ||
         //     command.content.display ||
         //     command.content.llm,
         // );
@@ -939,9 +933,9 @@ class PlanningAgent extends BaseAgent {
                 "",
               )}` +
               // (isLast
-              //   ? `\n${command.content.llmLast || command.content.llm || command.content.display}`
+              //   ? `\n${command.content.llm || command.content.display}`
               //   : "")
-              `\nstdout：${command.content.llmLast || command.content.llm || command.content.display}`
+              `\nstdout：${command.content.llm || command.content.display}`
             );
           } else if (command.status === "error") {
             return (
@@ -1013,7 +1007,6 @@ class PlanningAgent extends BaseAgent {
               content: {
                 llm: "",
                 display: "",
-                llmLast: "",
                 response: "",
               },
             };
