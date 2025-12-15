@@ -63,10 +63,6 @@ class Request {
           },
           cancel(cancel) {
             emits.cancel(() => {
-              resolve({
-                type: "cancel",
-                content,
-              });
               cancel();
             });
           },
