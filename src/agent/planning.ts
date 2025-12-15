@@ -468,21 +468,31 @@ class PlanningAgent extends BaseAgent {
       );
     } else {
       let streamMessage = "";
+      let streamError: any = null;
+      let cancel = () => {};
 
       const stream = tool.stream
         ? (content: string, status: "start" | "ing" | "complete") => {
-            const { content: replaceContent, files } = parseFileBlocks(content);
-            const res = tool.stream!({
-              files,
-              status,
-              replaceContent,
-            });
-            if (typeof res === "string") {
-              // this.events.emit("streamMessage2", res);
-              command.events?.emit("streamMessage", {
-                message: res,
+            if (streamError) {
+              return;
+            }
+            try {
+              const { content: replaceContent, files } =
+                parseFileBlocks(content);
+              const res = tool.stream!({
+                files,
                 status,
+                replaceContent,
               });
+              if (typeof res === "string") {
+                command.events?.emit("streamMessage", {
+                  message: res,
+                  status,
+                });
+              }
+            } catch (e) {
+              streamError = e;
+              cancel();
             }
           }
         : (content: string, status: "start" | "ing" | "complete") => {
@@ -527,9 +537,16 @@ class PlanningAgent extends BaseAgent {
           complete: (content) => {
             stream?.(content, "complete");
           },
+          cancel: (fn) => {
+            cancel = fn;
+          },
         }),
         aiRole: tool.aiRole,
       });
+
+      if (streamError) {
+        throw streamError;
+      }
 
       if (response instanceof RxaiError) {
         throw response;
