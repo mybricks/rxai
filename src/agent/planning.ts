@@ -93,7 +93,6 @@ class PlanningAgent extends BaseAgent {
     content: {
       llm: string;
       display: string;
-      llmLast: string;
       response: string;
     };
     events?: Events<{ streamMessage: { message: string; status: string } }>;
@@ -133,7 +132,6 @@ class PlanningAgent extends BaseAgent {
             content: {
               llm: "",
               display: "",
-              llmLast: "",
               response: "",
             },
           };
@@ -310,7 +308,6 @@ class PlanningAgent extends BaseAgent {
             content: {
               llm: "",
               display: "",
-              llmLast: "",
               response: "",
             },
           };
@@ -400,7 +397,7 @@ class PlanningAgent extends BaseAgent {
 
           // this.events.emit(
           //   "summary",
-          //   command.content.llmLast || command.content.display,
+          //   command.content.display,
           // );
         }
       }
@@ -430,7 +427,6 @@ class PlanningAgent extends BaseAgent {
     const content = {
       llm: "",
       display: "",
-      llmLast: "",
       response: "",
     };
 
@@ -450,13 +446,11 @@ class PlanningAgent extends BaseAgent {
         return {
           llm: response,
           display: response,
-          llmLast: "",
         };
       } else {
         return {
           llm: response.llmContent,
           display: response.displayContent,
-          llmLast: "",
         };
       }
     };
@@ -474,21 +468,31 @@ class PlanningAgent extends BaseAgent {
       );
     } else {
       let streamMessage = "";
+      let streamError: any = null;
+      let cancel = () => {};
 
       const stream = tool.stream
         ? (content: string, status: "start" | "ing" | "complete") => {
-            const { content: replaceContent, files } = parseFileBlocks(content);
-            const res = tool.stream!({
-              files,
-              status,
-              replaceContent,
-            });
-            if (typeof res === "string") {
-              // this.events.emit("streamMessage2", res);
-              command.events?.emit("streamMessage", {
-                message: res,
+            if (streamError) {
+              return;
+            }
+            try {
+              const { content: replaceContent, files } =
+                parseFileBlocks(content);
+              const res = tool.stream!({
+                files,
                 status,
+                replaceContent,
               });
+              if (typeof res === "string") {
+                command.events?.emit("streamMessage", {
+                  message: res,
+                  status,
+                });
+              }
+            } catch (e) {
+              streamError = e;
+              cancel();
             }
           }
         : (content: string, status: "start" | "ing" | "complete") => {
@@ -520,6 +524,7 @@ class PlanningAgent extends BaseAgent {
             // }
 
             streamMessage += chunk;
+            command.content.response = streamMessage;
             stream?.(streamMessage, "ing");
             // if (!stream) {
             //   command.events?.emit("streamMessage", {
@@ -532,9 +537,16 @@ class PlanningAgent extends BaseAgent {
           complete: (content) => {
             stream?.(content, "complete");
           },
+          cancel: (fn) => {
+            cancel = fn;
+          },
         }),
         aiRole: tool.aiRole,
       });
+
+      if (streamError) {
+        throw streamError;
+      }
 
       if (response instanceof RxaiError) {
         throw response;
@@ -887,7 +899,6 @@ class PlanningAgent extends BaseAgent {
         const command = commands[commands.length - 1];
         // this.events.emit(
         //   "summary",
-        //   command.content.llmLast ||
         //     command.content.display ||
         //     command.content.llm,
         // );
@@ -939,9 +950,9 @@ class PlanningAgent extends BaseAgent {
                 "",
               )}` +
               // (isLast
-              //   ? `\n${command.content.llmLast || command.content.llm || command.content.display}`
+              //   ? `\n${command.content.llm || command.content.display}`
               //   : "")
-              `\nstdout：${command.content.llmLast || command.content.llm || command.content.display}`
+              `\nstdout：${command.content.llm || command.content.display}`
             );
           } else if (command.status === "error") {
             return (
@@ -1013,7 +1024,6 @@ class PlanningAgent extends BaseAgent {
               content: {
                 llm: "",
                 display: "",
-                llmLast: "",
                 response: "",
               },
             };
