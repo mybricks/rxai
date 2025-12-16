@@ -937,7 +937,7 @@ class PlanningAgent extends BaseAgent {
       }
     }
 
-    this.summary();
+    // this.summary();
   }
 
   /** 获取扩展参数 */
@@ -955,9 +955,9 @@ class PlanningAgent extends BaseAgent {
       return null;
     }
 
-    if (!this.summaryMessage) {
-      this.summary();
-    }
+    // if (!this.summaryMessage) {
+    //   this.summary();
+    // }
     let message = "";
     if (this.options.presetHistoryMessages?.length) {
       message +=
@@ -1158,6 +1158,11 @@ class PlanningAgent extends BaseAgent {
 【执行结果】产生了Z变化或达成了W效果。
 【最终状态】成功完成/部分完成/失败。
 \`\`\`
+
+---
+
+**注意：**
+1. 摘要结果必须精简，总字数不超过50字。
 
 ---
 
