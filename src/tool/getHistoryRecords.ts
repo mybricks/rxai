@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/ban-ts-comment */
 import { Rxai } from "../agent/rxai";
 
-const getHistoryRecords = (rxai: Rxai): Tool => {
+const getHistoryRecords = (): Tool => {
   return {
     name: "get-history-records",
     displayName: "读取历史对话记录",
@@ -69,18 +69,18 @@ const getHistoryRecords = (rxai: Rxai): Tool => {
     // @ts-ignore
     execute({ params }) {
       const { filenames } = params as { filenames: string };
-      const planningAgentsMap: any = {};
-      const planningAgents = filenames.split(",").forEach((filename) => {
-        const agent = rxai.fileNameMap[filename];
-        if (agent) {
-          planningAgentsMap[agent.planningAgent.id] = agent.planningAgent;
-        }
-        // return rxai.fileNameMap[filename];
-      });
+      // const planningAgentsMap: any = {};
+      // const planningAgents = filenames.split(",").forEach((filename) => {
+      //   const agent = rxai.fileNameMap[filename];
+      //   if (agent) {
+      //     planningAgentsMap[agent.planningAgent.id] = agent.planningAgent;
+      //   }
+      //   // return rxai.fileNameMap[filename];
+      // });
       // .filter(Boolean)
       // .sort((a, b) => a.index - b.index);
 
-      return planningAgentsMap;
+      return filenames.split(",");
 
       // console.log("[planningAgents]", planningAgents);
 

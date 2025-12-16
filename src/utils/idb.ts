@@ -97,7 +97,13 @@ class IDB {
       const index = store.index("key");
       const plans = await index.getAll(this.key);
 
-      return await Promise.all(
+      const contentTx = db.transaction("content", "readwrite");
+      const contentStore = contentTx.objectStore("content");
+      const id = `${this.key}-order`;
+      const type = "order";
+      const order = await contentStore.index("planId-type").get([id, type]);
+
+      const result = await Promise.all(
         plans.map(async (plan) => {
           const {
             content: { uuid },
@@ -109,6 +115,12 @@ class IDB {
           return { plan, content };
         }),
       );
+
+      if (order) {
+        return sortPlansByOrder(result, order.content as string[]);
+      }
+
+      return result;
     } catch (e) {
       console.error(e);
       return [];
@@ -142,7 +154,7 @@ class IDB {
     }
   }
 
-  async clear() {
+  async clear(planningAgents?: PlanningAgent[]) {
     // 清空所有对应当前key的plan数据，plan再根据uuid去匹配清空content
     const db = await this.dbPromise;
 
@@ -158,6 +170,32 @@ class IDB {
       planIndex.getAll(this.key),
       planIndex.getAllKeys(this.key),
     ]);
+
+    if (planningAgents) {
+      const uuids = new Set(planningAgents.map((agent) => agent.id));
+      const contentIndex = contentStore.index("planId");
+
+      let index = 0;
+      while (index < plans.length && uuids.size) {
+        const {
+          content: { uuid },
+        } = plans[index];
+
+        if (uuids.has(uuid)) {
+          await planStore.delete(planPrimaryKeys[index]);
+          const contentKeys = await contentIndex.getAllKeys(uuid);
+          for (const key of contentKeys) {
+            await contentStore.delete(key as number);
+          }
+          uuids.delete(uuid);
+        }
+
+        index++;
+      }
+
+      await tx.done;
+      return;
+    }
 
     // 删除 plan 记录
     for (const primaryKey of planPrimaryKeys) {
@@ -180,6 +218,64 @@ class IDB {
 
     await tx.done;
   }
+
+  async updateOrder(ids: string[]) {
+    try {
+      const db = await this.dbPromise;
+      const tx = db.transaction("content", "readwrite");
+      const store = tx.objectStore("content");
+      const id = `${this.key}-order`;
+      const type = "order";
+
+      if (ids.length) {
+        const res = await store.index("planId-type").get([id, type]);
+        const newRecord = {
+          planId: id,
+          type,
+          content: ids,
+        };
+
+        if (res) {
+          const key = await store.index("planId-type").getKey([id, type])!;
+          store.put(newRecord, key);
+        } else {
+          store.add(newRecord);
+        }
+      } else {
+        const contentIndex = store.index("planId");
+        const contentKeys = await contentIndex.getAllKeys(id);
+
+        for (const key of contentKeys) {
+          await store.delete(key as number);
+        }
+      }
+
+      // 等待事务完成
+      await tx.done;
+    } catch (e) {
+      console.error(e, ids);
+    }
+  }
 }
 
 export { IDB };
+
+function sortPlansByOrder(
+  plans: {
+    plan: PlanRecord;
+    content: ContentRecord[];
+  }[],
+  orderArray: string[],
+) {
+  const orderMap: Record<string, number> = {};
+  orderArray.forEach((uuid, index) => {
+    orderMap[uuid] = index;
+  });
+
+  return plans.sort((a, b) => {
+    const indexA = orderMap[a.plan.content.uuid];
+    const indexB = orderMap[b.plan.content.uuid];
+
+    return indexA - indexB;
+  });
+}

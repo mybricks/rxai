@@ -17,6 +17,7 @@ interface PlanningAgentOptions extends BaseAgentOptions {
   emits: Emits;
   tools: Tool[];
   message: string;
+  blockId?: string;
   attachments?: Attachment[];
   historyMessages: (history: any) => ChatMessages;
   presetMessages: ChatMessages | (() => ChatMessages);
@@ -64,6 +65,7 @@ type EventsKV = {
   summary: string;
   commands: PlanningAgent["commands"];
   error: string;
+  status: PlanStatus;
 };
 
 /**
@@ -97,7 +99,7 @@ class PlanningAgent extends BaseAgent {
     };
     events?: Events<{ streamMessage: { message: string; status: string } }>;
   }[] = [];
-  private toolHistory: { [key: string]: PlanningAgent } = {};
+  private filenames: string[] = [];
 
   private defaultPlanList = false;
 
@@ -161,6 +163,8 @@ class PlanningAgent extends BaseAgent {
   enableRetry: boolean = true;
 
   private summaryMessage: string = "";
+  /** 当前请求的cancel */
+  private currentRequestCancel = () => {};
 
   get id() {
     return this.uuid;
@@ -248,6 +252,10 @@ class PlanningAgent extends BaseAgent {
     }
   }
   private idbPubContent(type: string, content: any) {
+    // TODO error类型扩展
+    if (this.error?.message.llmContent === "已销毁") {
+      return;
+    }
     this.options.idb?.putContent({
       id: this.uuid,
       type,
@@ -450,7 +458,7 @@ class PlanningAgent extends BaseAgent {
       const [error, response] = await this.tryCatch(() => {
         if (tool.name === "get-history-records") {
           // @ts-ignore
-          this.toolHistory = tool.execute(params);
+          this.filenames = tool.execute(params);
           return "已读取历史对话记录";
         }
         return tool.execute(params);
@@ -487,11 +495,15 @@ class PlanningAgent extends BaseAgent {
     } else {
       let streamMessage = "";
       let streamError: any = null;
-      let cancel = () => {};
 
       const stream = tool.stream
         ? (content: string, status: "start" | "ing" | "complete") => {
             if (streamError) {
+              return;
+            }
+            if (this.status === "error") {
+              this.currentRequestCancel?.();
+              streamError = this.error;
               return;
             }
             try {
@@ -510,7 +522,7 @@ class PlanningAgent extends BaseAgent {
               }
             } catch (e) {
               streamError = e;
-              cancel();
+              this.currentRequestCancel?.();
             }
           }
         : (content: string, status: "start" | "ing" | "complete") => {
@@ -530,7 +542,7 @@ class PlanningAgent extends BaseAgent {
               attachments: this.options.attachments,
             }),
           },
-          ...this.getHistoryMessages(this.toolHistory),
+          ...this.getHistoryMessages(this.filenames),
         ],
       });
 
@@ -555,9 +567,6 @@ class PlanningAgent extends BaseAgent {
           },
           complete: (content) => {
             stream?.(content, "complete");
-          },
-          cancel: (fn) => {
-            cancel = fn;
           },
         }),
         aiRole: tool.aiRole,
@@ -609,6 +618,7 @@ class PlanningAgent extends BaseAgent {
       cancel: (fn) => {
         options.emits.cancel(fn);
         emits?.cancel?.(fn);
+        this.currentRequestCancel = fn;
       },
     };
   }
@@ -852,6 +862,7 @@ class PlanningAgent extends BaseAgent {
   private setStatus(status: PlanningAgent["status"]) {
     this.status = status;
     this.idbPubContent("status", status);
+    this.events.emit("status", status);
   }
 
   /** TODO: 获取DB存储的plan静态数据 */
@@ -869,6 +880,7 @@ class PlanningAgent extends BaseAgent {
           ? options.presetMessages()
           : options.presetMessages,
       planList: options.planList,
+      blockId: options.blockId,
     };
   }
 
@@ -894,7 +906,7 @@ class PlanningAgent extends BaseAgent {
 
     if (this.status === "pending") {
       // 未正常完成，设置为取消状态
-      this.status = "aborted";
+      this.setStatus("aborted");
     }
 
     this.setLoading(false);
@@ -931,6 +943,10 @@ class PlanningAgent extends BaseAgent {
   /** 获取扩展参数 */
   get extension() {
     return this.options.extension;
+  }
+
+  get blockId() {
+    return this.options.blockId;
   }
 
   /** TODO: 获取当前plan的总结信息 */
@@ -1023,7 +1039,8 @@ class PlanningAgent extends BaseAgent {
       }
       return [undefined, result];
     } catch (e) {
-      if (log) {
+      // TODO error类型扩展
+      if (log && this.error?.message.llmContent !== "已销毁") {
         console.error("[Rxai - planning - error]", e);
       }
       return [e, CATCH_EMPTY];
@@ -1179,9 +1196,17 @@ ${message}
     };
   }
 
-  getHistoryMessages = (history: any = {}) => {
-    return this.options.historyMessages(history);
+  getHistoryMessages = (filenames: string[] = []) => {
+    return this.options.historyMessages(filenames);
   };
+  destroy() {
+    this.status = "error";
+    this.error = new ToolError({
+      llmContent: "已销毁",
+      displayContent: "已销毁",
+    });
+    this.currentRequestCancel?.();
+  }
 }
 
 export { PlanningAgent };

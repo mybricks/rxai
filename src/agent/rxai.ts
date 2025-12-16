@@ -13,7 +13,7 @@ interface RegisterParams {
 interface RequestParams {
   message: string;
   emits: Emits;
-  key: string;
+  blockId?: string;
   attachments?: Attachment[];
   presetMessages?: ChatMessages | (() => ChatMessages);
   presetHistoryMessages?: ChatMessages;
@@ -39,6 +39,7 @@ interface RequestParams {
       ][]
     | null;
   formatUserMessage?: (userMessage: string) => string;
+  insertAfter?: PlanningAgent;
 }
 
 interface RxaiOptions {
@@ -50,8 +51,6 @@ interface RxaiOptions {
 
 class Rxai extends BaseAgent {
   private cacheMessages: PlanningAgent[] = [];
-  private cacheIndex: number = 0;
-  fileNameMap: any = {};
   private idb?: IDB;
 
   events = new Events<{
@@ -70,6 +69,7 @@ class Rxai extends BaseAgent {
 
     options.idb?.getPlans().then((plans) => {
       plans.forEach(({ plan, content }: any) => {
+        const startMessages = [...this.cacheMessages];
         // TODO: idb类型定义补充
         const planAgent = new PlanningAgent({
           requestInstance: this.requestInstance,
@@ -86,29 +86,30 @@ class Rxai extends BaseAgent {
           //   pre.push(...cur.getMessages());
           //   return pre;
           // }, [] as ChatMessages),
-          historyMessages: (h) => this.getHistoryMessages(h),
+          historyMessages: (h) => {
+            return this.getHistoryMessages({
+              historyMessages: startMessages,
+              filenames: h,
+            });
+          },
           attachments: plan.content.attachments,
           presetMessages: plan.content.presetMessages,
           presetHistoryMessages: plan.content.presetHistoryMessages,
           // planList: plan.plan.content.planList,
           // enableLog: true,
           extension: plan.content.extension,
+          // idb: this.idb,
+          blockId: plan.content.blockId,
           uuid: plan.content.uuid,
-          idb: this.idb,
         });
 
         planAgent.recover(content);
 
         this.cacheMessages.push(planAgent);
-        this.fileNameMap[`history${this.cacheMessages.length}.md`] = {
-          index: this.cacheMessages.length,
-          planningAgent: planAgent,
-        };
       });
 
       if (this.cacheMessages.length) {
         this.events.emit("plan", this.cacheMessages);
-        this.cacheIndex = this.cacheMessages.length;
       }
     });
   }
@@ -121,6 +122,7 @@ class Rxai extends BaseAgent {
     const {
       message,
       emits,
+      blockId,
       attachments = [],
       presetMessages,
       presetHistoryMessages,
@@ -130,12 +132,44 @@ class Rxai extends BaseAgent {
       enableLog,
       extension,
       planningCheck,
+      insertAfter,
     } = params;
-    const index = this.cacheIndex++;
+
+    let startMessages = this.cacheMessages;
+    let endMessages: PlanningAgent[] = [];
+
+    if (insertAfter) {
+      const insertIndex = this.cacheMessages.findIndex((planAgent) => {
+        return planAgent.id === insertAfter.id;
+      });
+
+      if (insertIndex !== -1) {
+        const targetBlockId = this.cacheMessages[insertIndex].blockId;
+        let endIndex = insertIndex + 1;
+
+        while (
+          endIndex < this.cacheMessages.length &&
+          this.cacheMessages[endIndex].blockId === targetBlockId
+        ) {
+          endIndex++;
+        }
+
+        startMessages = this.cacheMessages.slice(0, insertIndex + 1);
+        const abandonedMessages = this.cacheMessages.slice(
+          insertIndex + 1,
+          endIndex,
+        );
+        abandonedMessages.forEach((planningAgent) => {
+          planningAgent.destroy();
+        });
+        this.idb?.clear(abandonedMessages);
+        endMessages = this.cacheMessages.slice(endIndex);
+      }
+    }
 
     const planningAgent = new PlanningAgent({
       requestInstance: this.requestInstance,
-      tools: [getHistoryRecords(this)].concat(
+      tools: [getHistoryRecords()].concat(
         tools ||
           Object.entries(this.scenes).reduce((pre, [, value]) => {
             pre.push(...value.tools);
@@ -146,7 +180,10 @@ class Rxai extends BaseAgent {
       emits,
       message,
       historyMessages: (h) => {
-        return this.getHistoryMessages(h);
+        return this.getHistoryMessages({
+          historyMessages: startMessages,
+          filenames: h,
+        });
       },
       formatUserMessage,
       attachments,
@@ -157,26 +194,29 @@ class Rxai extends BaseAgent {
       extension,
       idb: this.idb,
       planningCheck,
+      blockId,
     });
-    this.fileNameMap[`history${this.cacheIndex}.md`] = {
-      index: this.cacheIndex,
-      planningAgent,
-    };
-    this.cacheMessages[index] = planningAgent;
+
+    this.cacheMessages = startMessages
+      .concat(planningAgent)
+      .concat(endMessages);
 
     this.events.emit("plan", this.cacheMessages);
 
     this.idb?.addPlan(planningAgent);
+    this.idb?.updateOrder(
+      this.cacheMessages.map((planningAgent) => planningAgent.id),
+    );
 
     await planningAgent.run();
   }
 
   async clear() {
     this.cacheMessages = [];
-    this.cacheIndex = 0;
     this.events.emit("plan", this.cacheMessages);
 
     this.idb?.clear();
+    this.idb?.updateOrder([]);
   }
 
   export() {
@@ -185,14 +225,26 @@ class Rxai extends BaseAgent {
     });
   }
 
-  getHistoryMessages(history: any) {
+  getHistoryMessages(params: {
+    historyMessages: PlanningAgent[];
+    filenames: string[];
+  }) {
+    const { historyMessages, filenames } = params;
+
+    const filenamesMap = filenames.reduce<Record<string, boolean>>(
+      (pre, cur) => {
+        pre[cur] = true;
+        return pre;
+      },
+      {},
+    );
     const recordAttachements: any[] = [];
     let historyMessage =
       "# 历史对话记录" +
       `\n当前对话历史记录，包含所有历史图片，如果需要图片，根据每一轮对话记录的图片位置进行查询`;
     let recordIndex = 1;
 
-    this.cacheMessages.forEach((planAgent, index) => {
+    historyMessages.forEach((planAgent, index) => {
       const messages = planAgent.getMessages();
       if (messages) {
         const { message, attachments, summaryMessage } = messages;
@@ -202,7 +254,7 @@ class Rxai extends BaseAgent {
         if (summaryMessage) {
           expend = "摘要";
         }
-        if (history[planAgent.id]) {
+        if (filenamesMap[`history${index + 1}.md`]) {
           nextMessage = message;
           expend = "完整记录";
         }
