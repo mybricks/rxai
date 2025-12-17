@@ -1289,6 +1289,12 @@ function getPlanningStream(write: (chunk: string) => void) {
       }
     }
 
+    const bashIndex = planningMessage.indexOf("```bash");
+    if (bashIndex !== -1) {
+      stopWrite = true;
+      planningMessage = planningMessage.slice(0, bashIndex);
+    }
+
     write(planningMessage);
   };
 }
