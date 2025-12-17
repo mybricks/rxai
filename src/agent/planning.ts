@@ -443,6 +443,7 @@ class PlanningAgent extends BaseAgent {
     /** 工具提示词 */
     const toolPrompt = getToolPrompt(tool, {
       attachments: this.options.attachments,
+      params,
     });
 
     const content = {
@@ -540,6 +541,7 @@ class PlanningAgent extends BaseAgent {
             role: "system",
             content: getToolPrompt(tool, {
               attachments: this.options.attachments,
+              params,
             }),
           },
           ...this.getHistoryMessages(this.filenames),
