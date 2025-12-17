@@ -59,13 +59,13 @@ type EventsKV = {
   loading: boolean;
   userFriendlyMessages: any[];
   streamMessage: string;
-  streamMessage2: string;
   userMessage: ReturnType<PlanningAgent["getUserMessage"]>;
   startTime: number;
   summary: string;
   commands: PlanningAgent["commands"];
   error: string;
   status: PlanStatus;
+  planningMessage: string;
 };
 
 /**
@@ -267,6 +267,10 @@ class PlanningAgent extends BaseAgent {
   private async planning() {
     const { options } = this;
 
+    const planningStream = getPlanningStream((message) => {
+      this.events.emit("planningMessage", message);
+    });
+
     const planningResponse = await this.request({
       messages: this.getLLMMessages({
         start: [
@@ -281,7 +285,11 @@ class PlanningAgent extends BaseAgent {
           ...this.getHistoryMessages(),
         ],
       }),
-      emits: this.getEmits(),
+      emits: this.getEmits({
+        write: (chunk) => {
+          planningStream(chunk);
+        },
+      }),
     });
 
     if (planningResponse instanceof RxaiError) {
@@ -295,7 +303,7 @@ class PlanningAgent extends BaseAgent {
 
     if (!bashCommands.length) {
       // 说明没有规划
-      this.events.emit("summary", planningResponse);
+      // this.events.emit("summary", planningResponse);
       this.setStatus("success");
     } else {
       const { planningCheck } = this.options;
@@ -927,19 +935,15 @@ class PlanningAgent extends BaseAgent {
     } else {
       if (this.status === "aborted") {
         this.events.emit("summary", "已取消");
-      } else if (commands.length) {
-        const command = commands[commands.length - 1];
-        // this.events.emit(
-        //   "summary",
-        //     command.content.display ||
-        //     command.content.llm,
-        // );
-      } else {
+      } else if (!commands.length) {
         this.events.emit("summary", this.llmContent);
       }
     }
 
-    // this.summary();
+    if (commands.length) {
+      const bashIndex = this.llmContent.indexOf("```bash");
+      this.events.emit("planningMessage", this.llmContent.slice(0, bashIndex));
+    }
   }
 
   /** 获取扩展参数 */
@@ -1251,4 +1255,31 @@ function parseBashCommands(string: string) {
   });
 
   return result;
+}
+
+function getPlanningStream(write: (chunk: string) => void) {
+  let stopWrite = false;
+  let planningMessage = "";
+  let temp = "";
+
+  return (chunk: string) => {
+    if (stopWrite) {
+      return;
+    }
+    const tempChunk = temp + chunk;
+    const backticksIndex = tempChunk.indexOf("`");
+    if (backticksIndex !== -1) {
+      if (tempChunk.slice(backticksIndex, backticksIndex + 7) === "```bash") {
+        stopWrite = true;
+        planningMessage += tempChunk.slice(0, backticksIndex);
+      } else {
+        planningMessage += tempChunk.slice(0, backticksIndex);
+        temp = tempChunk.slice(backticksIndex);
+      }
+    } else {
+      planningMessage += chunk;
+    }
+
+    write(planningMessage);
+  };
 }
