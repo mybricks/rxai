@@ -1268,16 +1268,25 @@ function getPlanningStream(write: (chunk: string) => void) {
     }
     const tempChunk = temp + chunk;
     const backticksIndex = tempChunk.indexOf("`");
-    if (backticksIndex !== -1) {
-      if (tempChunk.slice(backticksIndex, backticksIndex + 7) === "```bash") {
+    if (temp && tempChunk.length >= 7) {
+      if (new RegExp(`^${tempChunk.slice(0, 7)}`).test("```bash")) {
         stopWrite = true;
-        planningMessage += tempChunk.slice(0, backticksIndex);
       } else {
-        planningMessage += tempChunk.slice(0, backticksIndex);
-        temp = tempChunk.slice(backticksIndex);
+        temp = "";
+        planningMessage += tempChunk;
       }
     } else {
-      planningMessage += chunk;
+      if (backticksIndex !== -1) {
+        if (tempChunk.slice(backticksIndex, backticksIndex + 7) === "```bash") {
+          stopWrite = true;
+          planningMessage += tempChunk.slice(0, backticksIndex);
+        } else {
+          planningMessage += tempChunk.slice(0, backticksIndex);
+          temp = tempChunk.slice(backticksIndex);
+        }
+      } else {
+        planningMessage += chunk;
+      }
     }
 
     write(planningMessage);
