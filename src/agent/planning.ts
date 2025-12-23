@@ -6,12 +6,9 @@ import { getToolPrompt } from "../prompt/tool";
 import { Events } from "../utils/events";
 import { Request } from "../request/request";
 import { IDB } from "../utils/idb";
-import { ToolError } from "../error/toolError";
 import { uuid } from "../utils/uuid";
 import { RxaiError } from "../error/base";
-import { RequestError } from "../error/requestError";
 import { retry } from "../utils/retry";
-import { RetryError } from "../error/retryError";
 
 interface PlanningAgentOptions extends BaseAgentOptions {
   emits: Emits;
@@ -51,7 +48,7 @@ type PlanStatus = "pending" | "success" | "error" | "aborted";
 /** 没有response */
 const CATCH_EMPTY = Symbol("CATCH_EMPTY");
 
-type PlanError = ToolError | RequestError | null;
+type PlanError = RxaiError | null;
 
 type CommandStatus = "pending" | "success" | "error" | null;
 
@@ -193,7 +190,7 @@ class PlanningAgent extends BaseAgent {
             },
             this.options.requestInstance.maxRetries,
             (error) => {
-              return error instanceof RequestError;
+              return error instanceof RxaiError && error.type === "request";
             },
           ),
         true,
@@ -253,7 +250,7 @@ class PlanningAgent extends BaseAgent {
   }
   private idbPubContent(type: string, content: any) {
     // TODO error类型扩展
-    if (this.error?.message.llmContent === "已销毁") {
+    if (this.error?.message === "已销毁") {
       return;
     }
     this.options.idb?.putContent({
@@ -311,7 +308,7 @@ class PlanningAgent extends BaseAgent {
       if (planningCheck) {
         const check = planningCheck(bashCommands);
         if (!check) {
-          throw new RequestError("规划结果不符合预期");
+          throw new RxaiError("规划结果不符合预期", "request");
         }
         bashCommands = check;
       }
@@ -381,7 +378,7 @@ class PlanningAgent extends BaseAgent {
             },
             this.requestInstance.maxRetries, // 暂时都用request配置的maxRetries
             (error) => {
-              return error instanceof RequestError;
+              return error instanceof RxaiError && error.type === "request";
             },
           ),
         true,
@@ -389,13 +386,15 @@ class PlanningAgent extends BaseAgent {
 
       if (response === CATCH_EMPTY) {
         command.status = "error";
-        if (error instanceof ToolError) {
-          const message = error.message;
+        if (error instanceof RxaiError && error.type === "tool") {
           Object.assign(command.content, {
-            llm: message.llmContent,
-            display: message.displayContent,
+            llm: error.message,
+            display: error.display,
           });
-        } else if (error instanceof RequestError || error instanceof Error) {
+        } else if (
+          (error instanceof RxaiError && error.type === "request") ||
+          error instanceof Error
+        ) {
           const message = error.message;
           Object.assign(command.content, {
             llm: message,
@@ -751,9 +750,8 @@ class PlanningAgent extends BaseAgent {
             ).reduce((acc, [key, value]) => {
               return acc + `-${key} ${value} `;
             }, "")}` +
-            (this.error instanceof ToolError
-              ? `\nzsh: ${this.error.message.llmContent}` +
-                "\n\n执行命令报错，请重试。"
+            (this.error instanceof RxaiError && this.error.type === "tool"
+              ? `\nzsh: ${this.error.message}` + "\n\n执行命令报错，请重试。"
               : "\n请") +
             "根据系统提示词的工具描述提供输出。";
         }
@@ -765,11 +763,11 @@ class PlanningAgent extends BaseAgent {
       });
     }
 
-    if (this.error instanceof RetryError) {
+    if (this.error instanceof RxaiError && this.error.type === "retry") {
       messages.push({
         role: "user",
         // @ts-ignore
-        content: `上次规划出错，错误信息为 ${(this.error?.error || this.error?.message)?.llmContent}，请基于用户消息重新规划。`,
+        content: `上次规划出错，错误信息为 ${this.error?.message}，请基于用户消息重新规划。`,
       });
     }
 
@@ -832,7 +830,7 @@ class PlanningAgent extends BaseAgent {
       this.setError(response.content);
       return response.content;
     } else if (response.type === "cancel") {
-      const error = new RequestError("已取消执行");
+      const error = new RxaiError("已取消执行", "request");
       this.setError(error);
       return error;
     }
@@ -852,20 +850,16 @@ class PlanningAgent extends BaseAgent {
     if (error instanceof RxaiError) {
       this.error = error;
     } else {
-      const message = (error as Error)?.message || "工具调用错误";
       // 默认为ToolError
-      this.error = new ToolError({
-        llmContent: message,
-        displayContent: message,
-      });
+      this.error = new RxaiError(
+        (error as Error)?.message || "工具调用错误",
+        "tool",
+      );
     }
 
-    this.idbPubContent("error", {
-      message: this.error.message,
-      type: this.error.type,
-    });
+    this.idbPubContent("error", this.error.toJSON());
 
-    this.events.emit("error", this.error.message.displayContent);
+    this.events.emit("error", this.error.display);
   }
 
   /** 设置状态 */
@@ -900,13 +894,11 @@ class PlanningAgent extends BaseAgent {
     params.forEach(({ type, content }: any) => {
       if (type === "error") {
         if (content) {
-          const ErrorClassMap = {
-            tool: ToolError,
-            request: RequestError,
-            retry: RetryError,
-          } as const;
-          // @ts-ignore
-          this[type] = new ErrorClassMap[content.type](content.message);
+          this.error = new RxaiError(
+            content.message,
+            content.type,
+            content.display,
+          ).recover(content);
         }
       } else {
         // @ts-ignore
@@ -931,7 +923,7 @@ class PlanningAgent extends BaseAgent {
     this.setCommands(commands, false);
 
     if (this.error) {
-      this.events.emit("error", this.error.message.displayContent);
+      this.events.emit("error", this.error.display);
     } else {
       if (this.status === "aborted") {
         this.events.emit("summary", "已取消");
@@ -1023,9 +1015,7 @@ class PlanningAgent extends BaseAgent {
         ? `\nsuccess${!this.commands.length ? `：${this.llmContent}` : ""}`
         : "") +
       (this.status === "aborted" ? "\naborted：执行中断" : "") +
-      (this.status === "error"
-        ? `\nerror：${this.error?.message.llmContent}`
-        : "");
+      (this.status === "error" ? `\nerror：${this.error?.message}` : "");
 
     return {
       message,
@@ -1055,7 +1045,7 @@ class PlanningAgent extends BaseAgent {
       return [undefined, result];
     } catch (e) {
       // TODO error类型扩展
-      if (log && this.error?.message.llmContent !== "已销毁") {
+      if (log && this.error?.message !== "已销毁") {
         console.error("[Rxai - planning - error]", e);
       }
       return [e, CATCH_EMPTY];
@@ -1063,7 +1053,7 @@ class PlanningAgent extends BaseAgent {
   }
 
   async retry() {
-    if (this.error instanceof RetryError) {
+    if (this.error instanceof RxaiError && this.error.type === "retry") {
       // 从意图识别开始
       if (this.defaultPlanList) {
         // 有默认配置，重制commands
@@ -1118,12 +1108,7 @@ class PlanningAgent extends BaseAgent {
       enableLog: this.enableLog,
       enableRetry: this.enableRetry,
       endTime: this.endTime,
-      error: this.error
-        ? {
-            message: this.error.message,
-            type: this.error.type,
-          }
-        : undefined,
+      error: this.error ? this.error.toJSON() : undefined,
       llmContent: this.llmContent,
       startTime: this.startTime,
       status: this.status,
@@ -1221,10 +1206,7 @@ ${message}
   };
   destroy() {
     this.status = "error";
-    this.error = new ToolError({
-      llmContent: "已销毁",
-      displayContent: "已销毁",
-    });
+    this.error = new RxaiError("已销毁", "tool");
     this.currentRequestCancel?.();
   }
 }

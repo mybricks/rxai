@@ -1,4 +1,4 @@
-const getToolPrompt = (tool: Tool, params: { attachments?: Attachment[] }) => {
+const getToolPrompt = (tool: Tool, params: any) => {
   const prompt = tool.getPrompts?.(params);
   if (!prompt) {
     return null;

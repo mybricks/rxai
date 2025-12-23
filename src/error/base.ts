@@ -1,53 +1,49 @@
-interface RxaiErrorMessage {
-  displayContent: string;
-  llmContent: string;
-}
-
-interface RxaiErrorOptions {
-  error: RxaiErrorMessage;
-  type: string;
-}
-
-class RxaiError {
-  protected error: RxaiErrorOptions["error"];
-  type: string;
-
-  constructor(options: RxaiErrorOptions) {
-    this.error = options.error;
-    this.type = options.type;
+class RxaiError extends Error {
+  constructor(
+    message: unknown,
+    /**
+     * 错误类型
+     * request - 请求错误
+     * retry - 该错误类型支持一键从0开始重试
+     * tool - 工具执行错误
+     */
+    private _type: "request" | "retry" | "tool",
+    private _display?: string,
+  ) {
+    super(
+      typeof message === "string"
+        ? message
+        : message instanceof Error
+          ? message.message
+          : "未知错误",
+    );
+    Object.setPrototypeOf(this, RxaiError.prototype);
+    this.name = this.constructor.name;
   }
 
-  get message() {
-    return this.error;
+  get type() {
+    return this._type;
   }
-}
 
-const DEFAULT_ERROR = "未知错误";
+  get display() {
+    return this._display || this.message;
+  }
 
-const normalizeErrorMessage = (error: any): RxaiErrorOptions["error"] => {
-  let displayContent = DEFAULT_ERROR;
-  let llmContent = DEFAULT_ERROR;
+  toJSON() {
+    return {
+      message: this.message,
+      stack: this.stack,
+      type: this._type,
+      display: this._display,
+    };
+  }
 
-  if (typeof error === "string") {
-    displayContent = llmContent = error;
-  } else {
-    const message = error?.message;
-    if (typeof message === "string") {
-      displayContent = llmContent = message;
-    } else if (typeof message === "object") {
-      if (message.displayContent) {
-        displayContent = message.displayContent;
-      }
-      if (message.llmContent) {
-        llmContent = message.llmContent;
-      }
+  recover(params: any) {
+    if (params?.stack) {
+      this.stack = params.stack;
     }
+    return this;
   }
+}
 
-  return {
-    displayContent,
-    llmContent,
-  };
-};
-
-export { RxaiError, normalizeErrorMessage, RxaiErrorMessage };
+export { RxaiError };
