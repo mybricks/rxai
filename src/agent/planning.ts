@@ -965,10 +965,11 @@ class PlanningAgent extends BaseAgent {
     //   this.summary();
     // }
     let message = "";
-    if (this.options.presetHistoryMessages?.length) {
+    const presetHistoryMessages = this.options.presetHistoryMessages;
+    if (presetHistoryMessages?.length) {
       message +=
         "### 系统信息" +
-        `${this.options.presetHistoryMessages.reduce((pre, cur) => {
+        `${presetHistoryMessages.reduce((pre, cur) => {
           return pre + `\n${cur.content}`;
         }, "")}`;
     }
@@ -1028,7 +1029,15 @@ class PlanningAgent extends BaseAgent {
 
     return {
       message,
-      summaryMessage: this.summaryMessage,
+      summaryMessage: this.summaryMessage
+        ? `${
+            presetHistoryMessages?.length
+              ? presetHistoryMessages.reduce((pre, cur) => {
+                  return pre + `\n${cur.content}`;
+                }, "") + "\n"
+              : ""
+          }` + this.summaryMessage
+        : "",
       attachments: this.options.attachments,
     };
   }
