@@ -20,6 +20,7 @@ interface PlanningAgentOptions extends BaseAgentOptions {
   presetMessages: ChatMessages | (() => ChatMessages);
   presetHistoryMessages: ChatMessages;
   formatUserMessage?: (msg: any) => any;
+  guidePrompt?: string;
   planList?: string[];
   extension?: unknown;
   idb?: IDB;
@@ -704,119 +705,118 @@ class PlanningAgent extends BaseAgent {
   private getLLMMessages(params: { start?: ChatMessages; end?: ChatMessages }) {
     const { options } = this;
     const { start, end } = params;
+    // 辅助函数，用于从 argv 构建命令字符串
+    const buildCommandString = (
+      argv: [string, string, Record<string, any>],
+    ) => {
+      const [bash, name, params = {}] = argv;
+      return `${name} ${Object.entries(params).reduce(
+        (acc, [key, value]) => acc + `-${key} ${value} `,
+        "",
+      )}`.trim();
+    };
 
-    const messages = [
-      ...(typeof options.presetMessages === "function"
-        ? options.presetMessages()
-        : options.presetMessages),
+    // 获取用户原始需求
+    const userOriginalRequest = this.getUserMessage().content;
+    const userMessage =
       typeof options.formatUserMessage === "function"
         ? this.formatUserMessage(
             this.getUserMessage(),
             options.formatUserMessage,
           )
-        : this.getUserMessage(),
-    ];
+        : userOriginalRequest;
 
-    let toolMessage = "";
-    let toolPendingMessage = "";
+    // 如果存在命令，则构建“工具规划”和“执行进度”
+    if (this.commands.length > 0) {
+      // 预先找到当前正在执行的命令
+      const currentCommand = this.commands.find((c) => c.status === "pending");
+      const currentCommandString = currentCommand
+        ? buildCommandString(currentCommand.argv)
+        : "无";
 
-    if (this.commands.length) {
-      toolMessage =
-        "以下是对完成当前需求所需的待执行bash命令列表，将严格按照顺序执行" +
-        "\n## 待执行bash命令列表";
-
+      // --- 构建“工具规划”部分 ---
+      let planningContent = `\n\n---\n## 工具规划`;
+      planningContent += `\n为了帮助用户达成上述目的，系统规划了以下工具来处理，当前正在执行 ${currentCommandString}。`;
       for (const command of this.commands) {
-        if (command.status === null) {
-          break;
-        }
-
-        const { argv } = command;
-        const [bash, name, params = {}] = argv;
-        const success = command.status === "success";
-        toolMessage +=
-          `\n- [${success ? "x" : " "}] ${bash} ${name} ${Object.entries(
-            params,
-          ).reduce((acc, [key, value]) => {
-            return acc + `-${key} ${value} `;
-          }, "")}` +
-          (success
-            ? `\nstdout：${command.content.llm || command.content.display}`
-            : "");
-
-        if (command.status === "pending") {
-          toolPendingMessage =
-            `\n\n当前正在执行命令 ${bash} ${name} ${Object.entries(
-              params,
-            ).reduce((acc, [key, value]) => {
-              return acc + `-${key} ${value} `;
-            }, "")}` +
-            (this.error instanceof RxaiError && this.error.type === "tool"
-              ? `\nzsh: ${this.error.message}` + "\n\n执行命令报错，请重试。"
-              : "\n请") +
-            "根据系统提示词的工具描述提供输出。";
-        }
+        if (command.status === null) continue;
+        const statusMap = { success: "[已完成]", pending: "[正在执行]" };
+        const status = statusMap[command.status] || "[待执行]";
+        planningContent += `\n${status} ${buildCommandString(command.argv)}`;
       }
 
-      messages.push({
-        role: "user",
-        content: toolMessage + toolPendingMessage,
-      });
+      // --- 构建“执行进度”部分 ---
+      let progressContent = `\n\n## 执行进度`;
+      for (const command of this.commands) {
+        if (command.status === null) continue;
+        const commandStr = buildCommandString(command.argv);
+        switch (command.status) {
+          case "success": {
+            progressContent += `\n\n[已完成] ${commandStr}`;
+            const output = command.content.llm || command.content.display;
+            progressContent += `\n----- 输出内容 -----\n${output}\n----- 输出内容 -----`;
+            break;
+          }
+          case "pending":
+            progressContent += `\n\n[正在执行] ${commandStr}`;
+            if (this.error instanceof RxaiError && this.error.type === "tool") {
+              progressContent += `\n执行时出错: ${this.error.message}\n请分析错误原因，修正上述命令或重新规划。`;
+            } else {
+              progressContent += "\n请根据工具描述，为当前步骤提供输出。";
+            }
+            break;
+          default:
+            progressContent += `\n\n[待执行] ${commandStr}`;
+            break;
+        }
+      }
+      // 组合所有内容
+      this.formatUserMessage(
+        userMessage,
+        (msg) => msg + planningContent + progressContent,
+      );
     }
 
+    // 附加重试错误信息
+    const retryMessage: ChatMessages = [];
     if (this.error instanceof RxaiError && this.error.type === "retry") {
-      messages.push({
+      retryMessage.push({
         role: "user",
         // @ts-ignore
-        content: `上次规划出错，错误信息为 ${this.error?.message}，请基于用户消息重新规划。`,
+        content: `[系统提示] 上次规划出错，错误信息: ${this.error.message}。请基于用户需求重新规划。`,
       });
     }
 
-    // for (const command of this.commands) {
-    //   if (command.status === null) {
-    //     break;
-    //   }
+    const guideMessage: ChatMessages = [];
+    if (this.options.guidePrompt) {
+      guideMessage.push({
+        role: "user",
+        content: `关于当前项目，用户提供了他的偏好信息，请注意参考偏好信息来完成任务。
+<system-reminder>
+IMPORTANT: this context may or may not be relevant to your tasks. You should not respond to this context unless it is highly relevant to your task.
+</system-reminder>
 
-    //   if (command.status === "success") {
-    //     messages.push(
-    //       {
-    //         role: "user",
-    //         content: `当前正在调用工具（${command.tool.name}，请根据系统提示词的工具描述、当前聚焦元素、和最近的用户需求提供输出。`,
-    //       },
-    //       {
-    //         role: "assistant",
-    //         content: command.content.llm || command.content.display,
-    //       },
-    //     );
-    //   } else {
-    //     messages.push({
-    //       role: "user",
-    //       content: `当前正在调用工具（${command.tool.name}，请根据系统提示词的工具描述、当前聚焦元素、和最近的用户需求提供输出。`,
-    //     });
-    //   }
-    // }
+<用户偏好信息>
+${this.options.guidePrompt}
+</用户偏好信息>`,
+      });
+    }
 
-    // if (this.error instanceof ToolError) {
-    //   messages.push(
-    //     {
-    //       role: "assistant",
-    //       content: `工具调用错误：${this.error.message.llmContent}`,
-    //     },
-    //     {
-    //       role: "user",
-    //       content: "请重试",
-    //     },
-    //   );
-    // }
-
+    // 组装最终消息列表
+    const messages = [
+      ...(typeof options.presetMessages === "function"
+        ? options.presetMessages()
+        : options.presetMessages),
+      ...guideMessage,
+      userMessage,
+      ...retryMessage,
+    ];
     if (start) {
       messages.unshift(...start);
     }
     if (end) {
       messages.push(...end);
     }
-
     this.setError(null);
-
     return messages;
   }
 
