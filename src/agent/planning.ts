@@ -717,14 +717,13 @@ class PlanningAgent extends BaseAgent {
     };
 
     // 获取用户原始需求
-    const userOriginalRequest = this.getUserMessage().content;
-    const userMessage =
+    let userMessage =
       typeof options.formatUserMessage === "function"
         ? this.formatUserMessage(
             this.getUserMessage(),
             options.formatUserMessage,
           )
-        : userOriginalRequest;
+        : this.getUserMessage();
 
     // 如果存在命令，则构建“工具规划”和“执行进度”
     if (this.commands.length > 0) {
@@ -770,7 +769,7 @@ class PlanningAgent extends BaseAgent {
         }
       }
       // 组合所有内容
-      this.formatUserMessage(
+      userMessage = this.formatUserMessage(
         userMessage,
         (msg) => msg + planningContent + progressContent,
       );
@@ -807,12 +806,7 @@ ${this.options.guidePrompt}
         ? options.presetMessages()
         : options.presetMessages),
       ...guideMessage,
-      typeof userMessage === "string"
-        ? {
-            role: "user",
-            content: userMessage,
-          }
-        : userMessage,
+      userMessage,
       ...retryMessage,
     ];
     if (start) {
