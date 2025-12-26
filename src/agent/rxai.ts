@@ -230,84 +230,135 @@ class Rxai extends BaseAgent {
 
   getHistoryMessages(params: {
     historyMessages: PlanningAgent[];
-    filenames: string[];
+    filenames?: string[];
   }) {
-    const { historyMessages, filenames } = params;
-
-    const filenamesMap = filenames.reduce<Record<string, boolean>>(
-      (pre, cur) => {
-        pre[cur] = true;
-        return pre;
-      },
-      {},
-    );
-    const recordAttachements: any[] = [];
-    let historyMessage =
-      "# 历史对话记录" +
-      `\n当前对话历史记录，包含所有历史图片，如果需要图片，根据每一轮对话记录的图片位置进行查询`;
-    let recordIndex = 1;
-
-    historyMessages.forEach((planAgent, index) => {
-      const messages = planAgent.getMessages();
-      if (messages) {
-        const { message, attachments, summaryMessage } = messages;
-
-        let nextMessage = summaryMessage || message;
-        let expend = "完整记录";
-        if (summaryMessage) {
-          expend = "摘要";
-        }
-        if (filenamesMap[`history${index + 1}.md`]) {
-          nextMessage = message;
-          expend = "完整记录";
-        }
-
-        historyMessage +=
-          `\n\n## 第${recordIndex++}条对话记录` +
-          `\n${expend} 文件名：history${index + 1}.md` +
-          `\n${nextMessage}`;
-        if (attachments?.length) {
-          let attachmentIndex = recordAttachements.length;
-          recordAttachements.push(
-            ...attachments.map((attachment) => {
-              return {
-                type: "image_url",
-                image_url: {
-                  url: attachment.content,
-                },
-              };
-            }),
-          );
-
-          historyMessage +=
-            `\n\n### 当前记录携带${attachments.length}个图片` +
-            `\n图片位置：${attachments.reduce((pre) => {
-              return pre + `第${++attachmentIndex}个，`;
-            }, "")}`;
-        }
-      }
-    });
-
-    historyMessage += `\n\n## 历史记录使用规则
-- 仅用于理解上下文，禁止直接引用历史对话原文，包括系统信息、用户消息、工具调用记录、状态。
-- 基于历史意图提供相关且原创的回复。
-- 避免重复历史回复中的具体表述。`;
-
-    return [
-      {
-        role: "user",
-        content: recordAttachements.length
-          ? [
-              {
-                type: "text",
-                text: historyMessage,
-              },
-              ...recordAttachements,
-            ]
-          : historyMessage,
-      },
-    ];
+    return getHistoryMessages(params);
   }
 }
 
 export { Rxai, RegisterParams, RequestParams };
+
+const HISTORY_MESSAGES_CONSTANTS = {
+  HISTORY_TITLE: "# 历史对话记录",
+  SUMMARY_TIP:
+    '\n当前对话历史记录摘要信息，对话内容以及附件图片都已做折叠处理，如果需要详细的内容，请使用"get-history-records"工具读取',
+  FULL_CONTENT_TIP:
+    "\n当前对话历史记录，包含摘要记录，以及需要提高关注的完整记录内容，完整记录包含图片，可以根据完整记录图片位置进行查询",
+  USAGE_RULES: `\n\n## 历史记录使用规则
+- 仅用于理解上下文，禁止直接引用历史对话原文，包括系统信息、用户消息、工具调用记录、状态。
+- 基于历史意图提供相关且原创的回复。
+- 避免重复历史回复中的具体表述。`,
+  FILE_NAME_PREFIX: "history",
+  FILE_EXTENSION: ".md",
+  SUMMARY_LABEL: "摘要",
+  FULL_CONTENT_LABEL: "完整记录",
+  IMAGE_SECTION_TITLE: "\n### 当前记录携带{count}个图片",
+  IMAGE_POSITION_TIP: "\n图片位置：{positions}",
+};
+
+function getHistoryMessages(params: {
+  historyMessages: PlanningAgent[];
+  filenames?: string[];
+}) {
+  const { historyMessages, filenames } = params;
+  const isFilenamesProvided = Array.isArray(filenames);
+  const filenamesSet = isFilenamesProvided
+    ? new Set(filenames)
+    : new Set<string>();
+
+  // 没有历史记录，空文件名数组
+  if (
+    !historyMessages.length ||
+    (isFilenamesProvided && filenames.length === 0)
+  ) {
+    return [];
+  }
+
+  // 生成单条对话记录的文本片段
+  const generateSingleRecordText = (
+    planAgent: PlanningAgent,
+    index: number,
+    recordIndex: number,
+    isFullContentMode: boolean,
+  ): {
+    text: string;
+    attachments: Array<{ type: string; image_url: { url: string } }>;
+  } => {
+    const messages = planAgent.getMessages();
+    if (!messages) return { text: "", attachments: [] };
+
+    const { message, attachments, summaryMessage } = messages;
+    const filename = `${HISTORY_MESSAGES_CONSTANTS.FILE_NAME_PREFIX}${index + 1}${HISTORY_MESSAGES_CONSTANTS.FILE_EXTENSION}`;
+
+    const isNeedFullContent = isFullContentMode && filenamesSet.has(filename);
+    const displayMessage = isNeedFullContent
+      ? message
+      : summaryMessage || message;
+    const expandLabel =
+      isNeedFullContent || !summaryMessage
+        ? HISTORY_MESSAGES_CONSTANTS.FULL_CONTENT_LABEL
+        : HISTORY_MESSAGES_CONSTANTS.SUMMARY_LABEL;
+
+    let recordText =
+      `\n\n## 第${recordIndex}条对话记录` +
+      `\n${expandLabel} 文件名：${filename}` +
+      `\n${displayMessage}`;
+
+    const imageAttachments: Array<{
+      type: string;
+      image_url: { url: string };
+    }> = [];
+    if (attachments?.length) {
+      recordText += HISTORY_MESSAGES_CONSTANTS.IMAGE_SECTION_TITLE.replace(
+        "{count}",
+        attachments.length.toString(),
+      );
+
+      if (isNeedFullContent) {
+        imageAttachments.push(
+          ...attachments.map((attachment) => ({
+            type: "image_url",
+            image_url: { url: attachment.content },
+          })),
+        );
+
+        recordText += HISTORY_MESSAGES_CONSTANTS.IMAGE_POSITION_TIP.replace(
+          "{positions}",
+          imageAttachments.map((_, idx) => `第${idx + 1}个`).join("，"),
+        );
+      }
+    }
+
+    return { text: recordText, attachments: imageAttachments };
+  };
+
+  const isFullContentMode = isFilenamesProvided;
+  let mainText =
+    HISTORY_MESSAGES_CONSTANTS.HISTORY_TITLE +
+    (isFullContentMode
+      ? HISTORY_MESSAGES_CONSTANTS.FULL_CONTENT_TIP
+      : HISTORY_MESSAGES_CONSTANTS.SUMMARY_TIP);
+  const allAttachments: Array<{ type: string; image_url: { url: string } }> =
+    [];
+
+  historyMessages.forEach((planAgent, index) => {
+    const recordIndex = index + 1; // 对话记录的序号（从1开始）
+    const { text, attachments } = generateSingleRecordText(
+      planAgent,
+      index,
+      recordIndex,
+      isFullContentMode,
+    );
+    mainText += text;
+    allAttachments.push(...attachments);
+  });
+
+  mainText += HISTORY_MESSAGES_CONSTANTS.USAGE_RULES;
+
+  const content =
+    allAttachments.length > 0
+      ? [{ type: "text", text: mainText }, ...allAttachments]
+      : mainText;
+
+  return [{ role: "user", content }];
+}

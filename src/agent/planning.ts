@@ -1201,7 +1201,7 @@ ${message}
     };
   }
 
-  getHistoryMessages = (filenames: string[] = []) => {
+  getHistoryMessages = (filenames?: string[]) => {
     return this.options.historyMessages(filenames);
   };
   destroy() {
