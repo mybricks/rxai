@@ -807,7 +807,12 @@ ${this.options.guidePrompt}
         ? options.presetMessages()
         : options.presetMessages),
       ...guideMessage,
-      userMessage,
+      typeof userMessage === "string"
+        ? {
+            role: "user",
+            content: userMessage,
+          }
+        : userMessage,
       ...retryMessage,
     ];
     if (start) {
