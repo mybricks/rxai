@@ -579,7 +579,10 @@ class PlanningAgent extends BaseAgent {
             stream?.(content, "complete");
           },
         }),
-        aiRole: tool.aiRole,
+        aiRole:
+          typeof tool.aiRole === "function"
+            ? tool.aiRole?.({ params })
+            : tool.aiRole,
       });
 
       if (streamError) {
