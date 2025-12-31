@@ -789,7 +789,10 @@ class PlanningAgent extends BaseAgent {
     }
 
     const guideMessage: ChatMessages = [];
-    if (this.options.guidePrompt) {
+    if (
+      this.options?.guidePrompt?.trim &&
+      this.options.guidePrompt.trim().length
+    ) {
       guideMessage.push({
         role: "user",
         content: `关于当前项目，用户提供了他的偏好信息，请注意参考偏好信息来完成任务。
