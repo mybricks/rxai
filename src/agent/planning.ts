@@ -786,7 +786,7 @@ ${this.options.guidePrompt}
               progressContent += `\n执行时出错: ${this.error.message}\n请分析错误原因，修正上述命令或重新规划。`;
             } else {
               progressContent +=
-                "\n请根据工具描述，以及前置工具的执行结果，为当前步骤提供输出。。";
+                "\n请根据工具描述、用户消息、以及前置工具的执行结果，为当前步骤提供输出。";
             }
             break;
           default:
