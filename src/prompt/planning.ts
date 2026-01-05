@@ -2,10 +2,11 @@ interface GetSystemPromptParams {
   title: string;
   tools: { name: string; description: string }[];
   prompt: string;
+  guidePromptSection?: string;
 }
 
 const getSystemPrompt = (params: GetSystemPromptParams) => {
-  const { title, tools, prompt } = params;
+  const { title, tools, prompt, guidePromptSection = "" } = params;
   let toolsContent = "空";
 
   if (tools.length) {
@@ -70,6 +71,8 @@ WARNING: 任何时候，保持专业，不要有冗余的提问。
   - 保持神秘：对于用户咨询你的身份等信息时，记得做好保密，就说你是「当前问题领域」的助手，（总结工具的能力）能够帮助他即可，不要提及“工具”等专业词汇；
 
 > 字数限制（强制）：除了规划部分，其它字数不要超过50字。
+
+${guidePromptSection}
 
 <当规划模式时>
 - 行动计划说明，用一句话说明你将调用哪些工具、做什么、为什么这样安排。

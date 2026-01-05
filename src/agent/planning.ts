@@ -10,6 +10,9 @@ import { uuid } from "../utils/uuid";
 import { RxaiError } from "../error/base";
 import { retry } from "../utils/retry";
 
+// 是否将 guidePrompt 注入到系统提示词中
+const guidePromptInSystemPrompt = true;
+
 interface PlanningAgentOptions extends BaseAgentOptions {
   emits: Emits;
   tools: Tool[];
@@ -229,6 +232,16 @@ class PlanningAgent extends BaseAgent {
     this.loading = loading;
     this.events.emit("loading", loading);
   }
+
+  /** 构建用户偏好信息提示词 */
+  private buildGuidePromptSection(): string {
+    return `
+<用户偏好信息>
+关于当前项目，用户提供了他的偏好信息，请注意参考偏好信息来完成任务。
+${this.options.guidePrompt}
+</用户偏好信息>
+`;
+  }
   private setCommands(commands: PlanningAgent["commands"], sync: boolean) {
     this.commands = commands.map((command) => {
       if (!command.events) {
@@ -278,6 +291,9 @@ class PlanningAgent extends BaseAgent {
               title: this.system.title,
               tools: options.tools,
               prompt: this.system.prompt,
+              guidePromptSection: guidePromptInSystemPrompt
+                ? this.buildGuidePromptSection()
+                : "",
             }),
           },
           ...this.getHistoryMessages(),
@@ -452,6 +468,9 @@ class PlanningAgent extends BaseAgent {
     const toolPrompt = getToolPrompt(tool, {
       attachments: this.options.attachments,
       params,
+      guidePromptSection: guidePromptInSystemPrompt
+        ? this.buildGuidePromptSection()
+        : "",
     });
 
     const content = {
@@ -550,6 +569,9 @@ class PlanningAgent extends BaseAgent {
             content: getToolPrompt(tool, {
               attachments: this.options.attachments,
               params,
+              guidePromptSection: guidePromptInSystemPrompt
+                ? this.buildGuidePromptSection()
+                : "",
             }),
           },
           ...this.getHistoryMessages(this.filenames),
@@ -789,20 +811,15 @@ class PlanningAgent extends BaseAgent {
     }
 
     const guideMessage: ChatMessages = [];
+    // 只有当配置为通过用户消息添加时，才添加 guidePrompt
     if (
+      !guidePromptInSystemPrompt &&
       this.options?.guidePrompt?.trim &&
       this.options.guidePrompt.trim().length
     ) {
       guideMessage.push({
         role: "user",
-        content: `关于当前项目，用户提供了他的偏好信息，请注意参考偏好信息来完成任务。
-<system-reminder>
-IMPORTANT: this context may or may not be relevant to your tasks. You should not respond to this context unless it is highly relevant to your task.
-</system-reminder>
-
-<用户偏好信息>
-${this.options.guidePrompt}
-</用户偏好信息>`,
+        content: this.buildGuidePromptSection(),
       });
     }
 
