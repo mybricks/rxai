@@ -235,12 +235,13 @@ class PlanningAgent extends BaseAgent {
 
   /** 构建用户偏好信息提示词 */
   private buildGuidePromptSection(): string {
-    return `
-<用户偏好信息>
+    return this.options.guidePrompt
+      ? `<用户偏好信息>
 关于当前项目，用户提供了他的偏好信息，请注意参考偏好信息来完成任务。
 ${this.options.guidePrompt}
 </用户偏好信息>
-`;
+`
+      : "";
   }
   private setCommands(commands: PlanningAgent["commands"], sync: boolean) {
     this.commands = commands.map((command) => {
