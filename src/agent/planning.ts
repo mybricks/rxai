@@ -289,7 +289,7 @@ ${this.options.guidePrompt}
           {
             role: "system",
             content: getSystemPrompt({
-              title: this.system.title,
+              title: "MyBricks.ai",
               tools: options.tools,
               prompt: this.system.prompt,
               guidePromptSection: guidePromptInSystemPrompt
