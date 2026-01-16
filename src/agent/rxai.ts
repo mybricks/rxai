@@ -121,6 +121,7 @@ class Rxai extends BaseAgent {
 
   async requestAI(params: RequestParams) {
     const {
+      system,
       message,
       emits,
       blockId,
@@ -178,7 +179,7 @@ class Rxai extends BaseAgent {
             return pre;
           }, [] as Tool[]),
       ),
-      system: this.system,
+      system: system ?? this.system,
       emits,
       message,
       historyMessages: (h) => {
