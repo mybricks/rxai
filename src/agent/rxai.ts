@@ -4,6 +4,7 @@ import { Request, RequestOptions } from "../request/request";
 import { Events } from "../utils/events";
 import { IDB } from "../utils/idb";
 import { getHistoryRecords } from "../tool/getHistoryRecords";
+import { uuid } from "../utils/uuid";
 
 interface RegisterParams {
   name: string;
@@ -11,6 +12,7 @@ interface RegisterParams {
 }
 
 interface RequestParams {
+  system?: BaseAgentOptions["system"];
   message: string;
   emits: Emits;
   blockId?: string;
@@ -51,6 +53,7 @@ interface RxaiOptions {
 }
 
 class Rxai extends BaseAgent {
+  key = uuid();
   private cacheMessages: PlanningAgent[] = [];
   private idb?: IDB;
 
