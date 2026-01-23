@@ -82,7 +82,7 @@ class IDB {
       const store = tx.objectStore("plan");
       store.add({
         key: this.key,
-        content: plan.getDBContent(),
+        content: await plan.getDBContent(),
       });
     } catch (e) {
       console.error(e, plan);

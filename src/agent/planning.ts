@@ -20,7 +20,10 @@ interface PlanningAgentOptions extends BaseAgentOptions {
   blockId?: string;
   attachments?: Attachment[];
   historyMessages: (history: any) => ChatMessages;
-  presetMessages: ChatMessages | (() => ChatMessages);
+  presetMessages:
+    | ChatMessages
+    | (() => ChatMessages)
+    | (() => Promise<ChatMessages>);
   presetHistoryMessages: ChatMessages;
   formatUserMessage?: (msg: any) => any;
   guidePrompt?: string;
@@ -284,7 +287,7 @@ ${this.options.guidePrompt}
     });
 
     const planningResponse = await this.request({
-      messages: this.getLLMMessages({
+      messages: await this.getLLMMessages({
         start: [
           {
             role: "system",
@@ -563,7 +566,7 @@ ${this.options.guidePrompt}
 
       stream?.("", "start");
 
-      const llmMessages = this.getLLMMessages({
+      const llmMessages = await this.getLLMMessages({
         start: [
           {
             role: "system",
@@ -728,7 +731,10 @@ ${this.options.guidePrompt}
   }
 
   /** 获取对话消息列表 */
-  private getLLMMessages(params: { start?: ChatMessages; end?: ChatMessages }) {
+  private async getLLMMessages(params: {
+    start?: ChatMessages;
+    end?: ChatMessages;
+  }) {
     const { options } = this;
     const { start, end } = params;
     // 辅助函数，用于从 argv 构建命令字符串
@@ -826,10 +832,12 @@ ${this.options.guidePrompt}
     }
 
     // 组装最终消息列表
+    const presetMsgs =
+      typeof options.presetMessages === "function"
+        ? await options.presetMessages()
+        : options.presetMessages;
     const messages = [
-      ...(typeof options.presetMessages === "function"
-        ? options.presetMessages()
-        : options.presetMessages),
+      ...presetMsgs,
       ...guideMessage,
       userMessage,
       ...retryMessage,
@@ -894,8 +902,12 @@ ${this.options.guidePrompt}
   }
 
   /** TODO: 获取DB存储的plan静态数据 */
-  getDBContent() {
+  async getDBContent() {
     const { options } = this;
+    const presetMsgs =
+      typeof options.presetMessages === "function"
+        ? await options.presetMessages()
+        : options.presetMessages;
     return {
       uuid: this.uuid,
       extension: options.extension,
@@ -903,10 +915,7 @@ ${this.options.guidePrompt}
       attachments: options.attachments,
       message: options.message,
       presetHistoryMessages: options.presetHistoryMessages,
-      presetMessages:
-        typeof options.presetMessages === "function"
-          ? options.presetMessages()
-          : options.presetMessages,
+      presetMessages: presetMsgs,
       planList: options.planList,
       blockId: options.blockId,
     };
@@ -1113,8 +1122,12 @@ ${this.options.guidePrompt}
     await this.start();
   }
 
-  export() {
+  async export() {
     const { options } = this;
+    const presetMsgs =
+      typeof options.presetMessages === "function"
+        ? await options.presetMessages()
+        : options.presetMessages;
     return {
       uuid: this.uuid,
       options: {
@@ -1122,10 +1135,7 @@ ${this.options.guidePrompt}
         extension: options.extension,
         message: options.message,
         presetHistoryMessages: options.presetHistoryMessages,
-        presetMessages:
-          typeof options.presetMessages === "function"
-            ? options.presetMessages()
-            : options.presetMessages,
+        presetMessages: presetMsgs,
       },
       commands: this.commands,
       defaultPlanList: this.defaultPlanList,

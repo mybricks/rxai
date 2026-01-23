@@ -17,7 +17,10 @@ interface RequestParams {
   emits: Emits;
   blockId?: string;
   attachments?: Attachment[];
-  presetMessages?: ChatMessages | (() => ChatMessages);
+  presetMessages?:
+    | ChatMessages
+    | (() => ChatMessages)
+    | (() => Promise<ChatMessages>);
   presetHistoryMessages?: ChatMessages;
   guidePrompt?: string;
   tools: Tool[];
@@ -226,10 +229,10 @@ class Rxai extends BaseAgent {
     this.idb?.updateOrder([]);
   }
 
-  export() {
-    return this.cacheMessages.map((planAgent) => {
-      return planAgent.export();
-    });
+  async export() {
+    return Promise.all(
+      this.cacheMessages.map((planAgent) => planAgent.export()),
+    );
   }
 
   getHistoryMessages(params: {
