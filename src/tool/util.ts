@@ -6,8 +6,7 @@
 export function parseFileBlocks(content: string) {
   const results = [];
   let currentIndex = 0;
-
-  let resultContent = content;
+  const resultParts: string[] = [];
 
   while (currentIndex < content.length) {
     // 查找代码块开始标记，支持多种格式和容错
@@ -16,11 +15,16 @@ export function parseFileBlocks(content: string) {
 
     const startMatch = startPattern.exec(content);
     if (!startMatch) {
+      // 把剩余内容原样追加
+      resultParts.push(content.slice(currentIndex));
       break; // 没有更多代码块
     }
 
     const [startFullMatch, language, attributesPart] = startMatch;
     const contentStartIndex = startMatch.index + startFullMatch.length;
+
+    // 先把代码块开始前的普通文本追加到结果
+    resultParts.push(content.slice(currentIndex, startMatch.index));
 
     // 解析文件名，采用严格模式，宁可不要也不要误匹配
     let fileName = "";
@@ -110,12 +114,8 @@ export function parseFileBlocks(content: string) {
       endIndex = endMatch.index;
     }
 
-    if (startIndex !== -1) {
-      resultContent = resultContent.replace(
-        resultContent.slice(startIndex, currentIndex),
-        finalFileName,
-      );
-    }
+    // 用 fileName 作为占位符替换整个代码块
+    resultParts.push(finalFileName);
 
     results.push({
       fileName: finalFileName,
@@ -127,14 +127,10 @@ export function parseFileBlocks(content: string) {
     });
   }
 
-  // 去除所有可能的代码块
-  const cleanedContent = resultContent
-    .replace(/```[\s\S]*?```/g, "")
-    .replace(/```[\s\S]*$/g, "")
-    .replace(/`{1,3}/g, "");
+  const resultContent = resultParts.join("");
 
   return {
-    content: cleanedContent,
+    content: resultContent,
     files: results,
   };
 }
