@@ -32,23 +32,21 @@ export function parseFileBlocks(content: string) {
       fileName = extractFileNameStrict(attributesPart);
     }
 
-    // 查找代码块结束标记
-    const endPattern = /\n```/g;
-    endPattern.lastIndex = contentStartIndex;
-
-    const endMatch = endPattern.exec(content);
-    let blockContent;
-    let isComplete;
+    // 在“代码块内容”片段中查找结束标记：支持“开头处 \s*```”或“换行后 \s*```”
+    const restContent = content.substring(contentStartIndex);
+    const endPattern = /(?:^\s*```|\n\s*```)/;
+    const endMatch = endPattern.exec(restContent);
+    let blockContent: string;
+    let isComplete: boolean;
 
     if (endMatch) {
-      // 找到完整的结束标记
-      blockContent = content.substring(contentStartIndex, endMatch.index + 1);
+      // 找到结束标记：取标记前的内容并去除首尾空白（空内容即得空字符串）
+      blockContent = restContent.substring(0, endMatch.index).trim();
       isComplete = true;
-      currentIndex = endMatch.index + endMatch[0].length;
+      currentIndex = contentStartIndex + endMatch.index + endMatch[0].length;
     } else {
-      // 没有找到结束标记，取到字符串末尾
-      blockContent = content.substring(contentStartIndex);
-      blockContent = blockContent.replace(/\n\s*`{1,2}$/, "\n");
+      // 没有找到结束标记，取到字符串末尾并去除尾部残留的 ``` 行
+      blockContent = restContent.replace(/\n\s*```\s*$/, "").trim();
       isComplete = false;
       currentIndex = content.length;
     }
