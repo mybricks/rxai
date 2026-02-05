@@ -28,7 +28,8 @@ interface Tool {
   description: string;
   displayName: string;
   getPrompts?: (params: { attachments?: Attachment[] }) => string;
-  aiRole?: "image" | "architect" | "expert";
+  /** 工具对应的 AI 角色 */
+  aiRole?: AiRole;
   execute: (params: {
     files: Files;
     content: string;
@@ -54,5 +55,7 @@ interface Attachment {
   size?: number;
 }
 
-/** AI角色定义 */
-type AiRole = "plan" | "image" | "architect" | "expert";
+/**
+ * AI 角色定义（按能力从轻到重）
+ */
+type AiRole = "plan" | "image" | "junior" | "expert" | "architect";

@@ -133,6 +133,11 @@ const transfromExtendParams = (extendParams: { aiRole?: AiRole }) => {
       role = "image";
       break;
     }
+    case ["junior"].includes(aiRole): {
+      model = "z-ai/glm-4.7";
+      role = "junior";
+      break;
+    }
     case ["architect"].includes(aiRole): {
       model = "google/gemini-3-pro-preview";
       role = "architect";

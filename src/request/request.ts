@@ -68,7 +68,7 @@ class Request {
           },
         };
 
-        // if (aiRole === "expert" && APP_ENV === "development") {
+        // if ((aiRole === "expert" || aiRole === 'architect') && APP_ENV === "development") {
         //   import("./preset/cdzd").then((module) => {
         //     (async () => {
         //       try {
