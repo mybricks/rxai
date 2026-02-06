@@ -29,7 +29,12 @@ interface Tool {
   displayName: string;
   getPrompts?: (params: { attachments?: Attachment[] }) => string;
   /** 工具对应的 AI 角色 */
-  aiRole?: AiRole;
+  aiRole?:
+    | AiRole
+    | ((ctx: {
+        params?: { [key: string]: string };
+        hasAttachments: boolean;
+      }) => AiRole);
   execute: (params: {
     files: Files;
     content: string;
@@ -40,8 +45,14 @@ interface Tool {
     files: Files;
     status: "start" | "ing" | "complete";
     replaceContent: string;
-  }) => void;
+  }) => void | string;
   streamThoughts?: boolean;
+  hooks?: {
+    /** 工具执行前钩子 */
+    before?: (ctx: {
+      params?: { [key: string]: string };
+    }) => void | Promise<void>;
+  };
 }
 
 /** TODO: 环境？可以去除 */

@@ -566,6 +566,14 @@ ${this.options.guidePrompt}
 
       stream?.("", "start");
 
+      // 执行 before 钩子
+      if (tool.hooks?.before && typeof tool.hooks.before === "function") {
+        await tool.hooks.before({
+          params,
+        });
+      }
+
+      const historyMessages = this.getHistoryMessages(this.filenames);
       const llmMessages = await this.getLLMMessages({
         start: [
           {
@@ -578,9 +586,19 @@ ${this.options.guidePrompt}
                 : "",
             }),
           },
-          ...this.getHistoryMessages(this.filenames),
+          ...historyMessages,
         ],
       });
+
+      // 检查是否有附件：当前请求的附件 + 历史记录中带进来的附件
+      // 只要 content 是数组结构就说明包含了附件
+      const hasHistoryAttachments = historyMessages.some((msg) => {
+        return Array.isArray(msg.content);
+      });
+
+      const hasAttachments = !!(
+        this.options.attachments?.length || hasHistoryAttachments
+      );
 
       const response = await this.request({
         messages: llmMessages,
@@ -607,7 +625,7 @@ ${this.options.guidePrompt}
         }),
         aiRole:
           typeof tool.aiRole === "function"
-            ? tool.aiRole?.({ params })
+            ? (tool.aiRole as any)?.({ params, hasAttachments })
             : tool.aiRole,
       });
 
