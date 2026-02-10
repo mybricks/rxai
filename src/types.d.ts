@@ -40,6 +40,8 @@ interface Tool {
     content: string;
     params?: { [key: string]: string };
     replaceContent: string;
+    /** 当前轮用户消息，便于工具内获取用户原始输入 */
+    userMessage?: { role: string; content: unknown };
   }) => string | { displayContent: string; llmContent: string };
   stream?: (params: {
     files: Files;

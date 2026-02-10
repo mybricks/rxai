@@ -522,6 +522,7 @@ ${this.options.guidePrompt}
           files: [],
           content: "",
           replaceContent: "",
+          getUserMessage: () => this.getUserMessage(),
         }),
       );
     } else {
@@ -647,6 +648,7 @@ ${this.options.guidePrompt}
           files,
           content: response,
           replaceContent,
+          getUserMessage: () => this.getUserMessage(),
         }),
         { response },
       );
