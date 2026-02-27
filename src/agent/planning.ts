@@ -107,6 +107,11 @@ class PlanningAgent extends BaseAgent {
 
   private defaultPlanList = false;
 
+  /** 追加命令的最大深度，防止循环追加 */
+  private static readonly MAX_APPEND_DEPTH = 5;
+  /** 当前追加深度 */
+  private appendDepth: number = 0;
+
   constructor(private options: PlanningAgentOptions) {
     super(options);
     // 设置UUID
@@ -368,28 +373,22 @@ ${this.options.guidePrompt}
 
   /** 执行规划的脚本 */
   private async executeCommands() {
-    // 命令
-    const commands = this.commands;
-    if (!commands.length) {
-      // 没有命令
+    if (!this.commands.length) {
       return;
     }
 
-    // 当前执行到第几个
-    let index = commands.findIndex((command) => command.status !== "success");
+    let index = this.commands.findIndex((command) => command.status !== "success");
     if (index === -1) {
-      // 命令全部执行完成
       return;
     }
 
-    while (commands.length !== index && this.status === "pending") {
-      const command = commands[index];
+    while (index < this.commands.length && this.status === "pending") {
+      const command = this.commands[index];
 
-      // 变更状态，开始执行
       command.status = "pending";
       command.startTime = new Date().getTime();
 
-      this.setCommands(commands, false);
+      this.setCommands(this.commands, false);
 
       const [error, response] = await this.tryCatch(
         async () =>
@@ -397,7 +396,7 @@ ${this.options.guidePrompt}
             () => {
               return this.executeCommand(command);
             },
-            this.requestInstance.maxRetries, // 暂时都用request配置的maxRetries
+            this.requestInstance.maxRetries,
             (error) => {
               return error instanceof RxaiError && error.type === "request";
             },
@@ -405,10 +404,13 @@ ${this.options.guidePrompt}
         true,
       );
 
+      // executeCommand 内可能调用了 handleAppendCommands -> setCommands，会替换 this.commands，必须重新取当前项
+      const current = this.commands[index];
+
       if (response === CATCH_EMPTY) {
-        command.status = "error";
+        current.status = "error";
         if (error instanceof RxaiError && error.type === "tool") {
-          Object.assign(command.content, {
+          Object.assign(current.content, {
             llm: error.message,
             display: error.display,
           });
@@ -417,40 +419,136 @@ ${this.options.guidePrompt}
           error instanceof Error
         ) {
           const message = error.message;
-          Object.assign(command.content, {
+          Object.assign(current.content, {
             llm: message,
             display: message,
           });
         } else {
           const message = "工具调用错误";
-          Object.assign(command.content, {
+          Object.assign(current.content, {
             llm: message,
             display: message,
           });
         }
         this.setError(error);
       } else {
-        command.status = "success";
-        Object.assign(command.content, response);
-        this.setCommands(commands, true);
+        current.status = "success";
+        Object.assign(current.content, response);
+        this.setCommands(this.commands, true);
       }
 
-      command.endTime = new Date().getTime();
+      current.endTime = new Date().getTime();
 
       if (this.status === "pending") {
         index++;
-        // TODO: idb记录状态
-        if (commands.length === index) {
-          // 所有工具都执行完成，设置完成状态
+        if (index === this.commands.length) {
           this.setStatus("success");
-
-          // this.events.emit(
-          //   "summary",
-          //   command.content.display,
-          // );
         }
       }
     }
+  }
+
+  /**
+   * 处理工具返回的追加命令，追加到执行队列末尾
+   * @param appendCommands 要追加的命令列表
+   * @returns 是否成功追加
+   */
+  private handleAppendCommands(appendCommands?: AppendCommand[]): boolean {
+    if (!appendCommands?.length) {
+      return false;
+    }
+
+    if (this.appendDepth >= PlanningAgent.MAX_APPEND_DEPTH) {
+      console.warn(
+        `[PlanningAgent] 追加深度已达上限 ${PlanningAgent.MAX_APPEND_DEPTH}，忽略后续追加`,
+      );
+      return false;
+    }
+
+    this.appendDepth++;
+
+    const newCommands = appendCommands
+      .map((cmd): PlanningAgent["commands"][number] | null => {
+        const tool = this.options.tools.find((t) => t.name === cmd.toolName);
+        if (!tool) {
+          console.warn(
+            `[PlanningAgent] 追加的工具 "${cmd.toolName}" 不存在，已忽略`,
+          );
+          return null;
+        }
+        return {
+          startTime: 0,
+          endTime: 0,
+          argv: ["node", cmd.toolName, cmd.params || {}],
+          status: null,
+          tool: {
+            name: tool.name,
+            displayName: tool.displayName,
+          },
+          content: {
+            llm: "",
+            display: "",
+            response: "",
+          },
+          events: new Events(),
+        };
+      })
+      .filter((c): c is PlanningAgent["commands"][number] => c !== null);
+
+    if (!newCommands.length) {
+      return false;
+    }
+
+    this.commands.push(...newCommands);
+    this.setCommands(this.commands, true);
+    return true;
+  }
+
+  /**
+   * 执行工具并规范化返回值（含 appendCommands）
+   */
+  private async toolExecute(
+    tool: Tool,
+    params: {
+      params?: { [key: string]: string };
+      files: Files;
+      content: string;
+      replaceContent: string;
+      getUserMessage?: () => ReturnType<PlanningAgent["getUserMessage"]>;
+    },
+  ): Promise<{
+    llm: string;
+    display: string;
+    appendCommands?: AppendCommand[];
+  }> {
+    const [error, response] = await this.tryCatch(() => {
+      if (tool.name === "get-history-records") {
+        // @ts-ignore
+        this.filenames = tool.execute(params);
+        return "已读取历史对话记录";
+      }
+      // 传入 params（含 getUserMessage 等扩展字段），类型与 Tool.execute 入参兼容
+      return tool.execute(params as any);
+    });
+
+    if (response === CATCH_EMPTY) {
+      throw error;
+    }
+
+    if (typeof response === "string") {
+      return { llm: response, display: response };
+    }
+
+    const obj = response as {
+      llmContent: string;
+      displayContent: string;
+      appendCommands?: AppendCommand[];
+    };
+    return {
+      llm: obj.llmContent,
+      display: obj.displayContent,
+      appendCommands: obj.appendCommands,
+    };
   }
 
   /**
@@ -483,48 +581,17 @@ ${this.options.guidePrompt}
       response: "",
     };
 
-    const toolExecute = async (
-      tool: Tool,
-      params: Parameters<Tool["execute"]>[0],
-    ) => {
-      const [error, response] = await this.tryCatch(() => {
-        if (tool.name === "get-history-records") {
-          // @ts-ignore
-          this.filenames = tool.execute(params);
-          return "已读取历史对话记录";
-        }
-        return tool.execute(params);
-      });
-
-      if (response === CATCH_EMPTY) {
-        throw error;
-      }
-
-      if (typeof response === "string") {
-        return {
-          llm: response,
-          display: response,
-        };
-      } else {
-        return {
-          llm: response.llmContent,
-          display: response.displayContent,
-        };
-      }
-    };
-
     if (!toolPrompt) {
-      // 没有提示词，走本地调用，执行execute
-      Object.assign(
-        content,
-        await toolExecute(tool, {
-          params,
-          files: [],
-          content: "",
-          replaceContent: "",
-          getUserMessage: () => this.getUserMessage(),
-        }),
-      );
+      const result = await this.toolExecute(tool, {
+        params,
+        files: [] as unknown as Files,
+        content: "",
+        replaceContent: "",
+        getUserMessage: () => this.getUserMessage(),
+      });
+      const { appendCommands, ...contentData } = result;
+      Object.assign(content, contentData);
+      this.handleAppendCommands(appendCommands);
     } else {
       let streamMessage = "";
       let streamError: any = null;
@@ -641,17 +708,16 @@ ${this.options.guidePrompt}
       // 解析文件
       const { files, content: replaceContent } = parseFileBlocks(response);
 
-      Object.assign(
-        content,
-        await toolExecute(tool, {
-          params,
-          files,
-          content: response,
-          replaceContent,
-          getUserMessage: () => this.getUserMessage(),
-        }),
-        { response },
-      );
+      const result = await this.toolExecute(tool, {
+        params,
+        files,
+        content: response,
+        replaceContent,
+        getUserMessage: () => this.getUserMessage(),
+      });
+      const { appendCommands, ...contentData } = result;
+      Object.assign(content, contentData, { response });
+      this.handleAppendCommands(appendCommands);
     }
 
     return content;

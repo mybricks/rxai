@@ -22,6 +22,24 @@ type Files = {
   isComplete: boolean;
 }[];
 
+/** 工具 execute 的返回类型 */
+type ToolExecuteResult =
+  | string
+  | {
+      displayContent: string;
+      llmContent: string;
+      /** 追加的工具调用列表，会在当前工具执行完后按顺序追加到执行队列末尾 */
+      appendCommands?: AppendCommand[];
+    };
+
+/** 追加的命令格式（用于 execute 返回值中的 appendCommands） */
+interface AppendCommand {
+  /** 工具名称，必须在当前 tools 列表中存在 */
+  toolName: string;
+  /** 工具参数，可选 */
+  params?: Record<string, string>;
+}
+
 /** 工具 */
 interface Tool {
   name: string;
@@ -35,6 +53,10 @@ interface Tool {
         params?: { [key: string]: string };
         hasAttachments: boolean;
       }) => AiRole);
+  /**
+   * 执行工具
+   * @returns 字符串或包含 displayContent/llmContent 的对象；对象中可选 appendCommands 用于追加后续工具
+   */
   execute: (params: {
     files: Files;
     content: string;
@@ -42,7 +64,7 @@ interface Tool {
     replaceContent: string;
     /** 当前轮用户消息，便于工具内获取用户原始输入 */
     userMessage?: { role: string; content: unknown };
-  }) => string | { displayContent: string; llmContent: string };
+  }) => ToolExecuteResult;
   stream?: (params: {
     files: Files;
     status: "start" | "ing" | "complete";
