@@ -7,7 +7,14 @@ import { Events } from "../utils/events";
 import { Request } from "../request/request";
 import { IDB } from "../utils/idb";
 import { uuid } from "../utils/uuid";
-import { RxaiError } from "../error/base";
+import {
+  RxaiError,
+  RequestError,
+  ToolRetryError,
+  RetryError,
+  createExecuteContext,
+  type ExecuteContext,
+} from "../error/base";
 import { retry } from "../utils/retry";
 
 // 是否将 guidePrompt 注入到系统提示词中
@@ -55,7 +62,7 @@ type PlanStatus = "pending" | "success" | "error" | "aborted";
 /** 没有response */
 const CATCH_EMPTY = Symbol("CATCH_EMPTY");
 
-type PlanError = RxaiError | null;
+type PlanError = RequestError | ToolRetryError | RetryError | null;
 
 type CommandStatus = "pending" | "success" | "error" | null;
 
@@ -202,7 +209,7 @@ class PlanningAgent extends BaseAgent {
             },
             this.options.requestInstance.maxRetries,
             (error) => {
-              return error instanceof RxaiError && error.type === "request";
+              return error instanceof RequestError;
             },
           ),
         true,
@@ -315,7 +322,11 @@ ${this.options.guidePrompt}
       }),
     });
 
-    if (planningResponse instanceof RxaiError) {
+    if (
+      planningResponse instanceof RequestError ||
+      planningResponse instanceof ToolRetryError ||
+      planningResponse instanceof RetryError
+    ) {
       // 规划出错
       return;
     }
@@ -334,7 +345,7 @@ ${this.options.guidePrompt}
       if (planningCheck) {
         const check = planningCheck(bashCommands);
         if (!check) {
-          throw new RxaiError("规划结果不符合预期", "request");
+          throw new RequestError("规划结果不符合预期");
         }
         bashCommands = check;
       }
@@ -377,7 +388,9 @@ ${this.options.guidePrompt}
       return;
     }
 
-    let index = this.commands.findIndex((command) => command.status !== "success");
+    let index = this.commands.findIndex(
+      (command) => command.status !== "success",
+    );
     if (index === -1) {
       return;
     }
@@ -390,34 +403,60 @@ ${this.options.guidePrompt}
 
       this.setCommands(this.commands, false);
 
-      const [error, response] = await this.tryCatch(
-        async () =>
-          await retry(
-            () => {
-              return this.executeCommand(command);
-            },
-            this.requestInstance.maxRetries,
-            (error) => {
-              return error instanceof RxaiError && error.type === "request";
-            },
-          ),
-        true,
-      );
+      const [error, response] = await this.tryCatch(async () => {
+        try {
+          return await this.executeCommand(command);
+        } catch (e) {
+          // 统一处理：根据错误类型决定重试策略
+          if (e instanceof ToolRetryError && e.autoRetry && e.maxRetries > 0) {
+            // 先把当前错误信息写入步骤 content，与手动重试时一致，再自动重试
+            const currentForRetry = this.commands[index];
+            Object.assign(currentForRetry.content, {
+              llm: e.getLlmContentWithRetryMessage(),
+              display: e.displayContent,
+            });
+            this.setCommands(this.commands, false);
+            // 进入 catch 时已执行过 1 次，retry() 内部会再执行 (count+1) 次，故传 maxRetries-1 才能保证「1 次初始 + maxRetries 次重试」
+            return await retry(
+              () => this.executeCommand(command),
+              Math.max(0, e.maxRetries - 1),
+              (x) => x instanceof ToolRetryError,
+            );
+          }
+          if (e instanceof RequestError) {
+            const retries = e.maxRetries ?? this.requestInstance.maxRetries;
+            if (retries > 0) {
+              return await retry(
+                () => this.executeCommand(command),
+                Math.max(0, retries - 1),
+                (x) => x instanceof RequestError,
+              );
+            }
+          }
+          throw e;
+        }
+      }, true);
 
       // executeCommand 内可能调用了 handleAppendCommands -> setCommands，会替换 this.commands，必须重新取当前项
       const current = this.commands[index];
 
       if (response === CATCH_EMPTY) {
+        this.setLoading(false);
         current.status = "error";
-        if (error instanceof RxaiError && error.type === "tool") {
-          Object.assign(current.content, {
-            llm: error.message,
-            display: error.display,
-          });
-        } else if (
-          (error instanceof RxaiError && error.type === "request") ||
-          error instanceof Error
+        // 统一错误内容设置
+        if (
+          error instanceof ToolRetryError ||
+          error instanceof RequestError ||
+          error instanceof RetryError
         ) {
+          Object.assign(current.content, {
+            llm:
+              error instanceof ToolRetryError
+                ? error.getLlmContentWithRetryMessage()
+                : error.llmContent,
+            display: error.displayContent,
+          });
+        } else if (error instanceof Error) {
           const message = error.message;
           Object.assign(current.content, {
             llm: message,
@@ -430,6 +469,7 @@ ${this.options.guidePrompt}
             display: message,
           });
         }
+        this.setCommands(this.commands, false);
         this.setError(error);
       } else {
         current.status = "success";
@@ -521,14 +561,20 @@ ${this.options.guidePrompt}
     display: string;
     appendCommands?: AppendCommand[];
   }> {
+    const context = createExecuteContext();
     const [error, response] = await this.tryCatch(() => {
       if (tool.name === "get-history-records") {
         // @ts-ignore
-        this.filenames = tool.execute(params);
+        this.filenames = (tool.execute as (p: any, c?: ExecuteContext) => any)(
+          params,
+          context,
+        );
         return "已读取历史对话记录";
       }
-      // 传入 params（含 getUserMessage 等扩展字段），类型与 Tool.execute 入参兼容
-      return tool.execute(params as any);
+      return (tool.execute as (p: any, c?: ExecuteContext) => any)(
+        params as any,
+        context,
+      );
     });
 
     if (response === CATCH_EMPTY) {
@@ -609,11 +655,16 @@ ${this.options.guidePrompt}
             try {
               const { content: replaceContent, files } =
                 parseFileBlocks(content);
-              const res = tool.stream!({
-                files,
-                status,
-                replaceContent,
-              });
+              const execContext = createExecuteContext();
+              const res = tool.stream!(
+                {
+                  files,
+                  status,
+                  replaceContent,
+                  content,
+                },
+                execContext,
+              );
               if (typeof res === "string") {
                 command.events?.emit("streamMessage", {
                   message: res,
@@ -701,7 +752,11 @@ ${this.options.guidePrompt}
         throw streamError;
       }
 
-      if (response instanceof RxaiError) {
+      if (
+        response instanceof RequestError ||
+        response instanceof ToolRetryError ||
+        response instanceof RetryError
+      ) {
         throw response;
       }
 
@@ -856,8 +911,12 @@ ${this.options.guidePrompt}
       planningContent += `\n为了帮助用户达成上述目的，系统规划了以下工具来处理，当前正在执行 ${currentCommandString}。`;
       for (const command of this.commands) {
         if (command.status === null) continue;
-        const statusMap = { success: "[已完成]", pending: "[正在执行]" };
-        const status = statusMap[command.status] || "[待执行]";
+        const statusMap: Record<string, string> = {
+          success: "[已完成]",
+          pending: "[正在执行]",
+          error: "[执行失败]",
+        };
+        const status = statusMap[command.status] ?? "[待执行]";
         planningContent += `\n${status} ${buildCommandString(command.argv)}`;
       }
 
@@ -873,15 +932,27 @@ ${this.options.guidePrompt}
             progressContent += `\n----- 输出内容 -----\n${output}\n----- 输出内容 -----`;
             break;
           }
-          case "pending":
+          case "pending": {
             progressContent += `\n\n[正在执行] ${commandStr}`;
-            if (this.error instanceof RxaiError && this.error.type === "tool") {
+            const pendingOutput =
+              command.content.llm || command.content.display;
+            if (pendingOutput) {
+              progressContent += `\n----- 输出内容 -----\n${pendingOutput}\n----- 输出内容 -----`;
+              progressContent += `\n执行时出错，请分析错误原因，修正上述命令或重新规划。`;
+            } else if (this.error instanceof ToolRetryError) {
               progressContent += `\n执行时出错: ${this.error.message}\n请分析错误原因，修正上述命令或重新规划。`;
             } else {
               progressContent +=
                 "\n请根据工具描述、用户消息、以及前置工具的执行结果，为当前步骤提供输出。";
             }
             break;
+          }
+          case "error": {
+            progressContent += `\n\n[执行失败] ${commandStr}`;
+            const errOutput = command.content.llm || command.content.display;
+            progressContent += `\n----- 输出内容 -----\n${errOutput || "工具调用错误"}\n----- 输出内容 -----`;
+            break;
+          }
           default:
             progressContent += `\n\n[待执行] ${commandStr}`;
             break;
@@ -896,7 +967,7 @@ ${this.options.guidePrompt}
 
     // 附加重试错误信息
     const retryMessage: ChatMessages = [];
-    if (this.error instanceof RxaiError && this.error.type === "retry") {
+    if (this.error instanceof RetryError) {
       retryMessage.push({
         role: "user",
         // @ts-ignore
@@ -948,7 +1019,7 @@ ${this.options.guidePrompt}
       this.setError(response.content);
       return response.content;
     } else if (response.type === "cancel") {
-      const error = new RxaiError("已取消执行", "request");
+      const error = new RequestError("已取消执行");
       this.setError(error);
       return error;
     }
@@ -964,20 +1035,24 @@ ${this.options.guidePrompt}
       this.idbPubContent("error", null);
       return;
     }
+    this.setLoading(false);
     this.setStatus("error");
-    if (error instanceof RxaiError) {
+    if (
+      error instanceof RequestError ||
+      error instanceof ToolRetryError ||
+      error instanceof RetryError
+    ) {
       this.error = error;
     } else {
-      // 默认为ToolError
-      this.error = new RxaiError(
+      // 默认为ToolRetryError
+      this.error = new ToolRetryError(
         (error as Error)?.message || "工具调用错误",
-        "tool",
       );
     }
 
     this.idbPubContent("error", this.error.toJSON());
 
-    this.events.emit("error", this.error.display);
+    this.events.emit("error", this.error.displayContent);
   }
 
   /** 设置状态 */
@@ -1013,11 +1088,12 @@ ${this.options.guidePrompt}
     params.forEach(({ type, content }: any) => {
       if (type === "error") {
         if (content) {
-          this.error = new RxaiError(
+          // 使用 RxaiError 工厂兼容旧数据
+          this.error = RxaiError(
             content.message,
             content.type,
-            content.display,
-          ).recover(content);
+            content.display || content.displayContent,
+          );
         }
       } else {
         // @ts-ignore
@@ -1042,7 +1118,7 @@ ${this.options.guidePrompt}
     this.setCommands(commands, false);
 
     if (this.error) {
-      this.events.emit("error", this.error.display);
+      this.events.emit("error", this.error.displayContent);
     } else {
       if (this.status === "aborted") {
         this.events.emit("summary", "已取消");
@@ -1172,7 +1248,7 @@ ${this.options.guidePrompt}
   }
 
   async retry() {
-    if (this.error instanceof RxaiError && this.error.type === "retry") {
+    if (this.error instanceof RetryError) {
       // 从意图识别开始
       if (this.defaultPlanList) {
         // 有默认配置，重制commands
@@ -1326,7 +1402,7 @@ ${message}
   };
   destroy() {
     this.status = "error";
-    this.error = new RxaiError("已销毁", "tool");
+    this.error = new ToolRetryError("已销毁");
     this.currentRequestCancel?.();
   }
 }

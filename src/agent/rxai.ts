@@ -53,6 +53,12 @@ interface RxaiOptions {
   request: RequestOptions;
   enableLog?: boolean;
   idb?: IDB;
+  /** 预置的 LLM 返回文本，按调用顺序消耗；用完后后续请求（含 appendCommand、报错、后续轮）走真实 request */
+  mock?: {
+    responses: string[];
+    /** 每次返回预置内容前的延迟（毫秒），用于模拟网络/流式延迟 */
+    delay?: number;
+  };
 }
 
 class Rxai extends BaseAgent {
@@ -68,9 +74,32 @@ class Rxai extends BaseAgent {
   scenes: Record<string, RegisterParams> = {};
 
   constructor(options: RxaiOptions) {
+    const requestOptions: RequestOptions = (() => {
+      const real = options.request.requestAsStream;
+      const queue = options.mock?.responses ? [...options.mock.responses] : [];
+      const delayMs = options.mock?.delay ?? 0;
+      return {
+        ...options.request,
+        requestAsStream: async (
+          params: Parameters<RequestOptions["requestAsStream"]>[0],
+        ) => {
+          if (queue.length > 0) {
+            const text = queue.shift()!;
+            if (delayMs > 0) {
+              await new Promise((r) => setTimeout(r, delayMs));
+            }
+            params.emits.write(text);
+            params.emits.complete();
+            return;
+          }
+          return real(params);
+        },
+      };
+    })();
+
     super({
       ...options,
-      requestInstance: new Request(options.request),
+      requestInstance: new Request(requestOptions),
     });
     this.idb = options.idb;
 

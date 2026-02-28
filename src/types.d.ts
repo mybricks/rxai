@@ -40,6 +40,22 @@ interface AppendCommand {
   params?: Record<string, string>;
 }
 
+/** execute / stream 的第二个参数，提供错误类等上下文，后续可扩展 */
+interface ExecuteContext {
+  ToolRetryError: new (
+    params:
+      | {
+          llmContent: string;
+          displayContent: string;
+          autoRetry?: boolean;
+          appendRetryMessage?: boolean;
+          maxRetries?: number;
+        }
+      | string,
+  ) => Error;
+  RetryError: new (message: unknown, display?: string) => Error;
+}
+
 /** 工具 */
 interface Tool {
   name: string;
@@ -55,21 +71,31 @@ interface Tool {
       }) => AiRole);
   /**
    * 执行工具
+   * @param params 执行参数
+   * @param context 上下文（含 ToolRetryError、RetryError 等），供工具内按需抛出，后续可扩展
    * @returns 字符串或包含 displayContent/llmContent 的对象；对象中可选 appendCommands 用于追加后续工具
    */
-  execute: (params: {
-    files: Files;
-    content: string;
-    params?: { [key: string]: string };
-    replaceContent: string;
-    /** 当前轮用户消息，便于工具内获取用户原始输入 */
-    userMessage?: { role: string; content: unknown };
-  }) => ToolExecuteResult;
-  stream?: (params: {
-    files: Files;
-    status: "start" | "ing" | "complete";
-    replaceContent: string;
-  }) => void | string;
+  execute: (
+    params: {
+      files: Files;
+      content: string;
+      params?: { [key: string]: string };
+      replaceContent: string;
+      /** 当前轮用户消息，便于工具内获取用户原始输入 */
+      userMessage?: { role: string; content: unknown };
+    },
+    context?: ExecuteContext,
+  ) => ToolExecuteResult;
+  stream?: (
+    params: {
+      files: Files;
+      status: "start" | "ing" | "complete";
+      replaceContent: string;
+      /** 当前完整响应 */
+      content: string;
+    },
+    context?: ExecuteContext,
+  ) => void | string;
   streamThoughts?: boolean;
   hooks?: {
     /** 工具执行前钩子 */

@@ -1,4 +1,4 @@
-import { RxaiError } from "../error/base";
+import { RequestError } from "../error/base";
 import { retry } from "../utils/retry";
 
 interface RequestAsStreamParams {
@@ -27,7 +27,7 @@ class Request {
     params: RequestAsStreamParams,
   ): Promise<
     | { type: "complete"; content: string }
-    | { type: "error"; content: RxaiError }
+    | { type: "error"; content: RequestError }
     | { type: "cancel"; content: string }
   > {
     const requestAsStream: () => ReturnType<
@@ -58,7 +58,7 @@ class Request {
             }
             reject({
               type: "error",
-              content: new RxaiError(error, "request"),
+              content: new RequestError(error),
             });
           },
           cancel(cancel) {
@@ -99,7 +99,7 @@ class Request {
           } catch (error) {
             reject({
               type: "error",
-              content: new RxaiError(error, "request"),
+              content: new RequestError(error),
             });
           }
         })();
