@@ -27,6 +27,8 @@ interface PlanningAgentOptions extends BaseAgentOptions {
   blockId?: string;
   attachments?: Attachment[];
   historyMessages: (history: any) => ChatMessages;
+  /** 历史记录模式：aggregated=单条聚合，expanded=按轮次展开为 user/assistant 对 */
+  historyMessageMode?: "aggregated" | "expanded";
   presetMessages:
     | ChatMessages
     | (() => ChatMessages)
@@ -55,6 +57,8 @@ interface PlanningAgentOptions extends BaseAgentOptions {
         },
       ][]
     | null;
+  /** 追加命令的最大深度，防止循环追加；不传则使用默认值 */
+  maxAppendDepth?: number;
 }
 
 type PlanStatus = "pending" | "success" | "error" | "aborted";
@@ -112,15 +116,21 @@ class PlanningAgent extends BaseAgent {
   }[] = [];
   private filenames: string[] = [];
 
+  /** 格式化后的用户输入文本（仅用户原文经 formatUserMessage 后的结果，不含规划/进度），历史构建时优先使用 */
+  private formattedUserMessageText: string | null = null;
+
   private defaultPlanList = false;
 
-  /** 追加命令的最大深度，防止循环追加 */
-  private static readonly MAX_APPEND_DEPTH = 5;
+  /** 追加命令的最大深度（默认 5），防止循环追加 */
+  private static readonly DEFAULT_MAX_APPEND_DEPTH = 5;
+  private readonly maxAppendDepth: number;
   /** 当前追加深度 */
   private appendDepth: number = 0;
 
   constructor(private options: PlanningAgentOptions) {
     super(options);
+    this.maxAppendDepth =
+      options.maxAppendDepth ?? PlanningAgent.DEFAULT_MAX_APPEND_DEPTH;
     // 设置UUID
     this.uuid = options.uuid || uuid();
     if (options.planList) {
@@ -159,6 +169,27 @@ class PlanningAgent extends BaseAgent {
       );
 
       this.defaultPlanList = true;
+
+      // 初始化 formattedUserMessageText（planList 场景也需要）
+      if (typeof options.formatUserMessage === "function") {
+        const userMsg = this.getUserMessage();
+        const formatted = this.formatUserMessage(
+          userMsg,
+          options.formatUserMessage,
+        );
+        const text =
+          typeof formatted?.content === "string"
+            ? formatted.content
+            : Array.isArray(formatted?.content)
+              ? (formatted.content as { type: string; text?: string }[]).find(
+                  (item) => item.type === "text",
+                )?.text
+              : undefined;
+        this.formattedUserMessageText =
+          (typeof text === "string" ? text : null) ?? options.message;
+      } else {
+        this.formattedUserMessageText = options.message;
+      }
     }
     // 设置userMessage
     this.events.emit("userMessage", this.getUserMessage());
@@ -498,9 +529,9 @@ ${this.options.guidePrompt}
       return false;
     }
 
-    if (this.appendDepth >= PlanningAgent.MAX_APPEND_DEPTH) {
+    if (this.appendDepth >= this.maxAppendDepth) {
       console.warn(
-        `[PlanningAgent] 追加深度已达上限 ${PlanningAgent.MAX_APPEND_DEPTH}，忽略后续追加`,
+        `[PlanningAgent] 追加深度已达上限 ${this.maxAppendDepth}，忽略后续追加`,
       );
       return false;
     }
@@ -569,7 +600,12 @@ ${this.options.guidePrompt}
           params,
           context,
         );
-        return "已读取历史对话记录";
+        const mode = this.options.historyMessageMode ?? "aggregated";
+        const tip =
+          mode === "expanded"
+            ? `已读取历史对话记录：${(this.filenames as string[]).join(", ")}，后续将基于完整历史上下文继续`
+            : "已读取历史对话记录";
+        return tip;
       }
       return (tool.execute as (p: any, c?: ExecuteContext) => any)(
         params as any,
@@ -898,6 +934,25 @@ ${this.options.guidePrompt}
           )
         : this.getUserMessage();
 
+    // 存储格式化后的用户输入（仅第一次，供历史构建时优先使用）
+    if (this.formattedUserMessageText === null) {
+      const rawFormattedText =
+        typeof userMessage?.content === "string"
+          ? userMessage.content
+          : Array.isArray(userMessage?.content)
+            ? (userMessage.content as { type: string; text?: string }[]).find(
+                (item) => item.type === "text",
+              )?.text
+            : undefined;
+      this.formattedUserMessageText =
+        (typeof rawFormattedText === "string" ? rawFormattedText : null) ??
+        options.message;
+      this.idbPubContent(
+        "formattedUserMessageText",
+        this.formattedUserMessageText,
+      );
+    }
+
     // 如果存在命令，则构建“工具规划”和“执行进度”
     if (this.commands.length > 0) {
       // 预先找到当前正在执行的命令
@@ -1086,6 +1141,10 @@ ${this.options.guidePrompt}
   recover(params: any) {
     this.enableRetry = false;
     params.forEach(({ type, content }: any) => {
+      if (type === "formattedUserMessageText" && content != null) {
+        this.formattedUserMessageText = content;
+        return;
+      }
       if (type === "error") {
         if (content) {
           // 使用 RxaiError 工厂兼容旧数据
@@ -1143,7 +1202,12 @@ ${this.options.guidePrompt}
   }
 
   /** TODO: 获取当前plan的总结信息 */
-  getMessages() {
+  getMessages(): {
+    message: string;
+    userMessageText: string;
+    summaryMessage: string;
+    attachments?: Attachment[];
+  } | null {
     if (this.loading || this.status === "pending" || this.messages.length) {
       return null;
     }
@@ -1160,7 +1224,9 @@ ${this.options.guidePrompt}
           return pre + `\n${cur.content}`;
         }, "")}`;
     }
-    message += "\n\n### 用户消息" + `\n${this.options.message}`;
+    const userMessageText: string =
+      this.formattedUserMessageText ?? this.options.message;
+    message += "\n\n### 用户消息" + `\n${userMessageText}`;
 
     if (this.commands.length) {
       message +=
@@ -1214,6 +1280,7 @@ ${this.options.guidePrompt}
 
     return {
       message,
+      userMessageText,
       summaryMessage: this.summaryMessage
         ? `${
             presetHistoryMessages?.length
@@ -1309,6 +1376,7 @@ ${this.options.guidePrompt}
       startTime: this.startTime,
       status: this.status,
       summaryMessage: this.summaryMessage,
+      formattedUserMessageText: this.formattedUserMessageText,
     };
   }
 
@@ -1335,34 +1403,37 @@ ${this.options.guidePrompt}
         messages: [
           {
             role: "system",
-            content: `请对以下对话历史记录进行**专业摘要**，提取核心操作与结果，语言精炼，适合存档和快速查阅。
+            content: `你正在为后续对话生成一份「可延续对话摘要」。目标是让另一个 agent 读完这份摘要后，能无缝接手并继续当前工作。
+
+请基于下方对话历史，严格按照以下模板输出（保留二级标题与结构，只填写各节内容）：
 
 ---
+## Goal
 
-**摘要要求：**
-1. **用户意图**：用一句话总结用户的原始指令或请求。
-2. **关键操作**：列出执行的主要动作（工具调用和重要修改）。
-3. **执行结果**：概括任务执行的关键产出或变化。
-4. **最终状态**：说明任务完成情况。
+[用户想要达成的目标是什么？用 1～2 句话说明。]
 
+## Instructions
+
+- [用户给出的、与任务相关的重要指示]
+- [若有计划或规格说明，简要概括，便于下一 agent 按此继续]
+
+## Discoveries
+
+[对话过程中发现的重要信息、结论或约束，对后续 agent 继续工作有帮助的内容]
+
+## Accomplished
+
+[已完成的工作、进行中的工作、以及尚未完成/待办的工作]
+
+## Relevant files / directories
+
+[与任务相关的文件或目录列表：已读、已编辑或已创建的文件；若某目录下文件都相关，可只写目录路径。保持结构化、便于查找。]
 ---
 
-**输出格式示例：**
-\`\`\`
-【用户意图】用户希望实现某个具体目标。
-【关键操作】调用了工具A和B。
-【执行结果】产生了Z变化或达成了W效果。
-【最终状态】成功完成/部分完成/失败。
-\`\`\`
-
----
-
-**注意：**
-1. 摘要结果必须精简，总字数不超过50字。
-
----
-
-请根据以上要求，直接给出清晰、简明的摘要结果。`,
+要求：
+1. 信息完整、准确，便于下一 agent 理解上下文并继续执行。
+2. 语言精炼，避免重复；Relevant files 尽量列出真实路径或文件名。
+3. 直接输出上述模板的填写结果，不要额外解释或包裹在代码块中。`,
           },
           {
             role: "user",
