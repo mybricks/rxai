@@ -368,7 +368,7 @@ function generateExpandedHistoryMessages(params: {
     const userAttachments = planOpts?.attachments;
     const attachmentCount = attachments?.length ?? 0;
 
-    // user 消息：文本 + 实际附件图片（完整记录时在文字尾部追加图片数量提示）
+    // user 消息：摘要时只带文本；展开时才附上实际图片并追加数量提示
     const userTextWithHint =
       shouldExpand && attachmentCount > 0
         ? userText +
@@ -382,7 +382,7 @@ function generateExpandedHistoryMessages(params: {
       text?: string;
       image_url?: { url: string };
     }> = [{ type: "text", text: userTextWithHint }];
-    if (userAttachments?.length) {
+    if (shouldExpand && userAttachments?.length) {
       userAttachments.forEach((att: { content: string }) => {
         userContentParts.push({
           type: "image_url",
