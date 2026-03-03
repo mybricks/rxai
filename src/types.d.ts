@@ -53,7 +53,10 @@ interface ExecuteContext {
         }
       | string,
   ) => Error;
-  RetryError: new (message: unknown, display?: string) => Error;
+  RetryError: new (
+    message: unknown,
+    options?: { display?: string; maxRetries?: number },
+  ) => Error;
 }
 
 /** 工具 */

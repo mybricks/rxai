@@ -104,14 +104,22 @@ class ToolRetryError extends Error {
   }
 }
 
+export interface RetryErrorOptions {
+  display?: string;
+  /** 自动重试次数，默认 1 */
+  maxRetries?: number;
+}
+
 /**
- * 全局重试错误：支持用户一键从头（意图识别）开始重试
+ * 全局重试错误：框架自动从头（意图识别）重新规划。
+ * maxRetries 控制自动重试次数，用尽后转为用户手动重试。
  */
 class RetryError extends Error {
   readonly llmContent: string;
   readonly displayContent: string;
+  readonly maxRetries: number;
 
-  constructor(message: unknown, display?: string) {
+  constructor(message: unknown, options?: RetryErrorOptions) {
     const msg =
       typeof message === "string"
         ? message
@@ -121,7 +129,8 @@ class RetryError extends Error {
     super(msg);
     this.name = "RetryError";
     this.llmContent = msg;
-    this.displayContent = display || msg;
+    this.displayContent = options?.display || msg;
+    this.maxRetries = Math.max(0, options?.maxRetries ?? 1);
     Object.setPrototypeOf(this, RetryError.prototype);
   }
 
@@ -150,7 +159,7 @@ function RxaiError(
     case "request":
       return new RequestError(message);
     case "retry":
-      return new RetryError(message, display);
+      return new RetryError(message, { display });
     case "tool":
       return new ToolRetryError(
         typeof display === "string"

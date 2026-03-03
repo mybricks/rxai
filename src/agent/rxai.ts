@@ -322,7 +322,7 @@ const HISTORY_MESSAGES_CONSTANTS = {
    * - 图片位置说明已移至 user 消息尾部，assistant 不重复。
    */
   ASSISTANT_SUMMARY_META:
-    '<历史记录-摘要 类型="摘要" 文件名="{filename}" 附件数="{attachmentCount}" 可展开="是">\n（以下为系统存档的摘要，仅供上下文参考，请勿模仿此格式输出）\n\n',
+    '当前消息为格式化后的摘要内容，仅供上下文阅读，请勿模仿此格式。\n<历史记录-摘要 类型="摘要" 文件名="{filename}" 附件数="{attachmentCount}" 可展开="是">\n',
   ASSISTANT_SUMMARY_META_END: "\n</历史记录-摘要>",
   ASSISTANT_FULL_META:
     '<历史记录-完整 类型="完整记录" 文件名="{filename}" 附件数="{attachmentCount}">\n\n',

@@ -232,19 +232,29 @@ class PlanningAgent extends BaseAgent {
       // 没有commands，需要规划
       this.setLoading(true);
 
-      await this.tryCatch(
-        () =>
-          retry(
-            () => {
-              return this.planning();
-            },
-            this.options.requestInstance.maxRetries,
-            (error) => {
-              return error instanceof RequestError;
-            },
-          ),
-        true,
-      );
+      await this.tryCatch(async () => {
+        try {
+          return await this.planning();
+        } catch (e) {
+          // RetryError 用自身的 maxRetries；进入 catch 已执行 1 次，故传 maxRetries-1
+          if (e instanceof RetryError && e.maxRetries > 0) {
+            return await retry(
+              () => this.planning(),
+              Math.max(0, e.maxRetries - 1),
+              (x) => x instanceof RetryError,
+            );
+          }
+          // RequestError 用 requestInstance.maxRetries
+          if (e instanceof RequestError) {
+            return await retry(
+              () => this.planning(),
+              Math.max(0, this.options.requestInstance.maxRetries - 1),
+              (x) => x instanceof RequestError,
+            );
+          }
+          throw e;
+        }
+      }, true);
 
       this.setLoading(false);
     }
@@ -364,6 +374,13 @@ ${this.options.guidePrompt}
 
     this.setLlmContent(planningResponse);
 
+    // 规划响应中不应出现历史摘要格式，出现则说明 LLM 误将上下文中的摘要当作输出格式
+    if (planningResponse.includes("<历史记录-摘要")) {
+      throw new RetryError(
+        "返回结果包含历史记录摘要格式，请勿模仿摘要的格式输出，重新按要求规划并输出。",
+      );
+    }
+
     let bashCommands = parseBashCommands(planningResponse);
 
     if (!bashCommands.length) {
@@ -380,6 +397,8 @@ ${this.options.guidePrompt}
         }
         bashCommands = check;
       }
+
+      this.validateBashCommandTools(bashCommands);
 
       if (
         bashCommands.length === 1 &&
@@ -411,6 +430,26 @@ ${this.options.guidePrompt}
     }
 
     this.setEndTime(new Date().getTime());
+  }
+
+  /**
+   * 校验 bash 命令中的工具名是否均已注册，
+   * 若存在非法工具名则抛出 RequestError，触发全局重试并将错误消息带给下一轮 LLM。
+   */
+  private validateBashCommandTools(
+    bashCommands: [string, string, Record<string, string>][],
+  ) {
+    const registeredNames = new Set(this.options.tools.map((t) => t.name));
+    const invalidNames = bashCommands
+      .map((argv) => argv[1])
+      .filter((name) => !registeredNames.has(name));
+
+    if (invalidNames.length > 0) {
+      const available = Array.from(registeredNames).join("、");
+      throw new RetryError(
+        `以下工具名未注册或不可用，请仅使用已列出的工具重新规划：${invalidNames.join("、")}。可用工具：${available}`,
+      );
+    }
   }
 
   /** 执行规划的脚本 */
@@ -953,6 +992,14 @@ ${this.options.guidePrompt}
       );
     }
 
+    // 历史上下文中含有 <历史记录-摘要> 格式，提醒 LLM 不要模仿
+    userMessage = this.formatUserMessage(
+      userMessage,
+      (msg) =>
+        msg +
+        "\n\n[注意] 历史消息中可能包含 <历史记录-摘要> 格式的摘要内容，这个内容已经不是原始输出，禁止模仿此格式输出。",
+    );
+
     // 如果存在命令，则构建“工具规划”和“执行进度”
     if (this.commands.length > 0) {
       // 预先找到当前正在执行的命令
@@ -1020,7 +1067,7 @@ ${this.options.guidePrompt}
       );
     }
 
-    // 附加重试错误信息
+    // 附加重试错误信息，供重试轮把错误原因带给 LLM
     const retryMessage: ChatMessages = [];
     if (this.error instanceof RetryError) {
       retryMessage.push({
