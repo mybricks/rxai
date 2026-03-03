@@ -236,6 +236,11 @@ class PlanningAgent extends BaseAgent {
         try {
           return await this.planning();
         } catch (e) {
+          // 先设置 this.error，这样重试时 getLLMMessages 能拿到错误信息
+          if (e instanceof RetryError || e instanceof RequestError) {
+            this.error = e;
+          }
+
           // RetryError 用自身的 maxRetries；进入 catch 已执行 1 次，故传 maxRetries-1
           if (e instanceof RetryError && e.maxRetries > 0) {
             return await retry(
@@ -368,11 +373,15 @@ ${this.options.guidePrompt}
       planningResponse instanceof ToolRetryError ||
       planningResponse instanceof RetryError
     ) {
-      // 规划出错
+      // 规划出错：RequestError/RetryError 需要抛出让 start() 走自动重试；ToolRetryError 仅 return
+      if (
+        planningResponse instanceof RequestError ||
+        planningResponse instanceof RetryError
+      ) {
+        throw planningResponse;
+      }
       return;
     }
-
-    this.setLlmContent(planningResponse);
 
     // 规划响应中不应出现历史摘要格式，出现则说明 LLM 误将上下文中的摘要当作输出格式
     if (planningResponse.includes("<历史记录-摘要")) {
@@ -380,6 +389,8 @@ ${this.options.guidePrompt}
         "返回结果包含历史记录摘要格式，请勿模仿摘要的格式输出，重新按要求规划并输出。",
       );
     }
+
+    this.setLlmContent(planningResponse);
 
     let bashCommands = parseBashCommands(planningResponse);
 
@@ -434,7 +445,7 @@ ${this.options.guidePrompt}
 
   /**
    * 校验 bash 命令中的工具名是否均已注册，
-   * 若存在非法工具名则抛出 RequestError，触发全局重试并将错误消息带给下一轮 LLM。
+   * 若存在非法工具名则抛出 RetryError，触发全局重试并将错误消息带给下一轮 LLM。
    */
   private validateBashCommandTools(
     bashCommands: [string, string, Record<string, string>][],
@@ -1069,7 +1080,10 @@ ${this.options.guidePrompt}
 
     // 附加重试错误信息，供重试轮把错误原因带给 LLM
     const retryMessage: ChatMessages = [];
-    if (this.error instanceof RetryError) {
+    if (
+      this.error instanceof RetryError ||
+      this.error instanceof RequestError
+    ) {
       retryMessage.push({
         role: "user",
         // @ts-ignore

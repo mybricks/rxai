@@ -106,7 +106,7 @@ class ToolRetryError extends Error {
 
 export interface RetryErrorOptions {
   display?: string;
-  /** 自动重试次数，默认 1 */
+  /** 自动重试次数，默认 2（表示总共执行 2 次：1 次初始 + 1 次重试） */
   maxRetries?: number;
 }
 
@@ -130,7 +130,7 @@ class RetryError extends Error {
     this.name = "RetryError";
     this.llmContent = msg;
     this.displayContent = options?.display || msg;
-    this.maxRetries = Math.max(0, options?.maxRetries ?? 1);
+    this.maxRetries = Math.max(0, options?.maxRetries ?? 2);
     Object.setPrototypeOf(this, RetryError.prototype);
   }
 
