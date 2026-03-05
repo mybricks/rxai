@@ -75,6 +75,8 @@ class Rxai extends BaseAgent {
   private cacheMessages: PlanningAgent[] = [];
   private idb?: IDB;
   private historyMessageMode: HistoryMessageMode;
+  /** 等待 idb.getPlans() 恢复完成后再操作 cacheMessages，避免与 requestAI 竞态 */
+  private idbRestoreReady: Promise<void>;
 
   events = new Events<{
     plan: PlanningAgent[];
@@ -114,53 +116,49 @@ class Rxai extends BaseAgent {
     this.idb = options.idb;
     this.historyMessageMode = options.historyMessageMode ?? "aggregated";
 
-    options.idb?.getPlans().then((plans) => {
-      plans.forEach(({ plan, content }: any) => {
-        const startMessages = [...this.cacheMessages];
-        // TODO: idb类型定义补充
-        const planAgent = new PlanningAgent({
-          requestInstance: this.requestInstance,
-          tools: [], // TODO：需要传入工具
-          system: this.system,
-          emits: {
-            write: () => {},
-            complete: () => {},
-            error: () => {},
-            cancel: () => {},
-          },
-          message: plan.content.message,
-          // historyMessages: this.cacheMessages.reduce((pre, cur) => {
-          //   pre.push(...cur.getMessages());
-          //   return pre;
-          // }, [] as ChatMessages),
-          historyMessages: (h) => {
-            return this.getHistoryMessages({
-              historyMessages: startMessages,
-              filenames: h,
-              mode: this.historyMessageMode,
+    this.idbRestoreReady =
+      options.idb != null
+        ? options.idb.getPlans().then((plans) => {
+            plans.forEach(({ plan, content }: any) => {
+              const startMessages = [...this.cacheMessages];
+              // TODO: idb类型定义补充
+              const planAgent = new PlanningAgent({
+                requestInstance: this.requestInstance,
+                tools: [], // TODO：需要传入工具
+                system: this.system,
+                emits: {
+                  write: () => {},
+                  complete: () => {},
+                  error: () => {},
+                  cancel: () => {},
+                },
+                message: plan.content.message,
+                historyMessages: (h) => {
+                  return this.getHistoryMessages({
+                    historyMessages: startMessages,
+                    filenames: h,
+                    mode: this.historyMessageMode,
+                  });
+                },
+                historyMessageMode: this.historyMessageMode,
+                attachments: plan.content.attachments,
+                presetMessages: plan.content.presetMessages,
+                presetHistoryMessages: plan.content.presetHistoryMessages,
+                extension: plan.content.extension,
+                blockId: plan.content.blockId,
+                uuid: plan.content.uuid,
+              });
+
+              planAgent.recover(content);
+
+              this.cacheMessages.push(planAgent);
             });
-          },
-          historyMessageMode: this.historyMessageMode,
-          attachments: plan.content.attachments,
-          presetMessages: plan.content.presetMessages,
-          presetHistoryMessages: plan.content.presetHistoryMessages,
-          // planList: plan.plan.content.planList,
-          // enableLog: true,
-          extension: plan.content.extension,
-          // idb: this.idb,
-          blockId: plan.content.blockId,
-          uuid: plan.content.uuid,
-        });
 
-        planAgent.recover(content);
-
-        this.cacheMessages.push(planAgent);
-      });
-
-      if (this.cacheMessages.length) {
-        this.events.emit("plan", this.cacheMessages);
-      }
-    });
+            if (this.cacheMessages.length) {
+              this.events.emit("plan", this.cacheMessages);
+            }
+          })
+        : Promise.resolve();
   }
 
   register(params: RegisterParams) {
@@ -168,6 +166,8 @@ class Rxai extends BaseAgent {
   }
 
   async requestAI(params: RequestParams) {
+    await this.idbRestoreReady;
+
     const {
       system,
       message,
@@ -272,6 +272,7 @@ class Rxai extends BaseAgent {
   }
 
   async clear() {
+    await this.idbRestoreReady;
     this.cacheMessages = [];
     this.events.emit("plan", this.cacheMessages);
 
@@ -280,6 +281,7 @@ class Rxai extends BaseAgent {
   }
 
   async export() {
+    await this.idbRestoreReady;
     return Promise.all(
       this.cacheMessages.map((planAgent) => planAgent.export()),
     );
