@@ -109,6 +109,8 @@ class Rxai extends BaseAgent {
   private cacheMessages: PlanningAgent[] = [];
   private idb?: IDB;
   private historyMessageMode: HistoryMessageMode;
+  /** 等待 idb.getPlans() 恢复完成后再操作 cacheMessages，避免与 requestAI 竞态 */
+  private idbRestoreReady: Promise<void>;
 
   // ── compaction 相关状态 ──────────────────────────────────────────────────────
   /**
@@ -178,7 +180,7 @@ class Rxai extends BaseAgent {
 
     const boundaryReady = this.compactionBoundary.restore();
 
-    Promise.all([
+    this.idbRestoreReady = Promise.all([
       options.idb?.getPlans() ?? Promise.resolve([]),
       boundaryReady,
     ]).then(([plans]) => {
@@ -197,10 +199,6 @@ class Rxai extends BaseAgent {
             cancel: () => {},
           },
           message: plan.content.message,
-          // historyMessages: this.cacheMessages.reduce((pre, cur) => {
-          //   pre.push(...cur.getMessages());
-          //   return pre;
-          // }, [] as ChatMessages),
           historyMessages: (h) => {
             return this.getHistoryMessages({
               historyMessages: startMessages,
@@ -215,10 +213,7 @@ class Rxai extends BaseAgent {
           attachments: plan.content.attachments,
           presetMessages: plan.content.presetMessages,
           presetHistoryMessages: plan.content.presetHistoryMessages,
-          // planList: plan.plan.content.planList,
-          // enableLog: true,
           extension: plan.content.extension,
-          // idb: this.idb,
           blockId: plan.content.blockId,
           uuid: plan.content.uuid,
         });
@@ -244,6 +239,8 @@ class Rxai extends BaseAgent {
   }
 
   async requestAI(params: RequestParams) {
+    await this.idbRestoreReady;
+
     const {
       system,
       message,
@@ -383,6 +380,7 @@ class Rxai extends BaseAgent {
   }
 
   async clear() {
+    await this.idbRestoreReady;
     this.cacheMessages = [];
     this.compactionBoundary.reset(); // 同时重置峰值
     this.events.emit("plan", this.cacheMessages);
@@ -392,6 +390,7 @@ class Rxai extends BaseAgent {
   }
 
   async export() {
+    await this.idbRestoreReady;
     return Promise.all(
       this.cacheMessages.map((planAgent) => planAgent.export()),
     );
