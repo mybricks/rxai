@@ -1,6 +1,4 @@
 /* eslint-disable @typescript-eslint/ban-ts-comment */
-import { Rxai } from "../agent/rxai";
-
 const getHistoryRecords = (): Tool => {
   return {
     name: "get-history-records",
@@ -67,20 +65,17 @@ const getHistoryRecords = (): Tool => {
     // - **验证文件存在性**：确保目标文件在历史对话记录中
     // - **禁止猜测文件名**：严禁基于推测或假设来构造文件名进行读取`,
     // @ts-ignore
-    execute({ params }) {
+    execute({ params }, context) {
       const { filenames } = params as { filenames: string };
-      // const planningAgentsMap: any = {};
-      // const planningAgents = filenames.split(",").forEach((filename) => {
-      //   const agent = rxai.fileNameMap[filename];
-      //   if (agent) {
-      //     planningAgentsMap[agent.planningAgent.id] = agent.planningAgent;
-      //   }
-      //   // return rxai.fileNameMap[filename];
-      // });
-      // .filter(Boolean)
-      // .sort((a, b) => a.index - b.index);
+      const fileNames = filenames.split(",");
+      const isLast = context.currentIndex === context.commands.length - 1;
 
-      return filenames.split(",");
+      return {
+        llmContent: filenames,
+        displayContent: "已读取历史对话记录",
+        fileNames,
+        needsContinue: isLast,
+      };
 
       // console.log("[planningAgents]", planningAgents);
 

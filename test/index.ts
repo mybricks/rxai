@@ -468,6 +468,7 @@ const pageScene: {
         );
         return "getInfoBeforeGenerate 调用完成";
       },
+      displayName: "",
     },
     {
       name: "generatePage",
@@ -1271,6 +1272,7 @@ const pageScene: {
         );
         return "generatePage 调用完成";
       },
+      displayName: "",
     },
   ],
 };

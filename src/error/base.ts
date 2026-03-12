@@ -192,16 +192,3 @@ RxaiError.isTool = (e: unknown): e is ToolRetryError =>
 RxaiError.isRetry = (e: unknown): e is RetryError => e instanceof RetryError;
 
 export { RxaiError, RequestError, ToolRetryError, RetryError };
-
-/** execute / stream 的第二个参数，提供错误类等上下文，后续可扩展其他字段 */
-export interface ExecuteContext {
-  ToolRetryError: typeof ToolRetryError;
-  RetryError: typeof RetryError;
-}
-
-export function createExecuteContext(): ExecuteContext {
-  return {
-    ToolRetryError,
-    RetryError,
-  };
-}

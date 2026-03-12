@@ -32,6 +32,15 @@ interface MessagesDBSchema extends DBSchema {
   };
 }
 
+export interface CompactionRecord {
+  /** 已压缩的历史摘要文本 */
+  summary: string;
+  /** 已压缩的 agent uuid 列表 */
+  summarizedUuids: string[];
+  /** 自上次压缩/清除以来记录到的上下文 token 峰值 */
+  peakTokens: number;
+}
+
 interface IDBOptions {
   dbName: string;
   key: number;
@@ -217,6 +226,56 @@ class IDB {
     }
 
     await tx.done;
+
+    // 全量清空时同步清理 compaction 记录
+    if (!planningAgents) {
+      await this.clearCompaction();
+    }
+  }
+
+  /** compaction 记录的 planId 标识（全局唯一，绑定当前 key） */
+  private get compactionPlanId() {
+    return `${this.key}-compaction`;
+  }
+
+  async getCompaction(): Promise<CompactionRecord | null> {
+    try {
+      const db = await this.dbPromise;
+      const tx = db.transaction("content", "readonly");
+      const store = tx.objectStore("content");
+      const record = await store
+        .index("planId-type")
+        .get([this.compactionPlanId, "compaction"]);
+      return (record?.content as CompactionRecord) ?? null;
+    } catch (e) {
+      console.error(e);
+      return null;
+    }
+  }
+
+  async putCompaction(data: CompactionRecord): Promise<void> {
+    await this.putContent({
+      id: this.compactionPlanId,
+      type: "compaction",
+      content: data,
+    });
+  }
+
+  async clearCompaction(): Promise<void> {
+    try {
+      const db = await this.dbPromise;
+      const tx = db.transaction("content", "readwrite");
+      const store = tx.objectStore("content");
+      const keys = await store
+        .index("planId")
+        .getAllKeys(this.compactionPlanId);
+      for (const key of keys) {
+        await store.delete(key as number);
+      }
+      await tx.done;
+    } catch (e) {
+      console.error(e);
+    }
   }
 
   async updateOrder(ids: string[]) {

@@ -5,6 +5,17 @@ import { Events } from "../utils/events";
 import { IDB } from "../utils/idb";
 import { getHistoryRecords } from "../tool/getHistoryRecords";
 import { uuid } from "../utils/uuid";
+import {
+  type CompactionConfig,
+  resolveCompactionConfig,
+  partition,
+  estimateTokens,
+  shouldCompact,
+} from "../utils/compaction/index";
+import {
+  CompactionBoundary,
+  type CompactionStats,
+} from "../utils/compaction/boundary";
 
 interface RegisterParams {
   name: string;
@@ -52,16 +63,39 @@ interface RequestParams {
   historyMessageMode?: HistoryMessageMode;
 }
 
-/** 历史记录注入方式：聚合（单条 user 消息）或展开（多轮 user/assistant） */
-export type HistoryMessageMode = "aggregated" | "expanded";
+/**
+ * 历史记录注入方式：
+ * - aggregated：所有历史聚合为单条 user 消息，默认摘要，按需展开
+ * - expanded：  每条历史展开为 user/assistant 对，默认摘要，按需展开
+ * - full：      每条历史展开为 user/assistant 对，全量原始内容，无摘要折叠；
+ *               配合 compaction 使用时，仅压缩摘要会出现在最头部
+ */
+export type HistoryMessageMode = "aggregated" | "expanded" | "full";
 
 interface RxaiOptions {
   system?: BaseAgentOptions["system"];
   request: RequestOptions;
   enableLog?: boolean;
   idb?: IDB;
-  /** 历史记录模式：aggregated=单条聚合，expanded=按轮次展开为 user/assistant 对，默认 aggregated */
+  /** 历史记录模式，默认 aggregated */
   historyMessageMode?: HistoryMessageMode;
+  /**
+   * 模型上下文窗口大小（token 数）。
+   * 传入后，每次工具调用都会估算上下文用量并通过 compactionStats 事件通知 UI，
+   * 即使不开启压缩（不传 compaction）也生效。
+   */
+  contextWindow?: number;
+  /**
+   * 历史记录压缩配置。不传则不开启压缩（保持原有行为）。
+   * 开启压缩时 contextWindow 优先从此处取，其次取顶层 contextWindow，最后用默认值。
+   *
+   * @example
+   * compaction: {
+   *   contextWindow: 128000, // 模型上下文窗口大小
+   *   threshold: 0.8,        // 上下文使用率超过 80% 时触发压缩
+   * }
+   */
+  compaction?: Partial<CompactionConfig>;
   /** 预置的 LLM 返回文本，按调用顺序消耗；用完后后续请求（含 appendCommand、报错、后续轮）走真实 request */
   mock?: {
     responses: string[];
@@ -76,8 +110,24 @@ class Rxai extends BaseAgent {
   private idb?: IDB;
   private historyMessageMode: HistoryMessageMode;
 
+  // ── compaction 相关状态 ──────────────────────────────────────────────────────
+  /**
+   * 模型上下文窗口大小（token 数）。
+   * 不为 null 时启用上下文用量追踪，工具调用后峰值有更新则通知 UI。
+   */
+  private contextWindow: number | null = null;
+  /** 压缩触发配置，null 表示不开启压缩 */
+  private compactionConfig: ReturnType<typeof resolveCompactionConfig> | null =
+    null;
+  /** 压缩边界：摘要文本 + 已压缩 uuid 的持久化管理 */
+  private compactionBoundary: CompactionBoundary = new CompactionBoundary();
+  /** 防止并发触发多次压缩任务 */
+  private compactionTask: Promise<void> | null = null;
+
   events = new Events<{
     plan: PlanningAgent[];
+    /** 上下文窗口使用统计，工具调用后峰值有更新时通知，可直接透传给 UI */
+    compactionStats: CompactionStats;
   }>();
 
   // 场景
@@ -99,7 +149,7 @@ class Rxai extends BaseAgent {
               await new Promise((r) => setTimeout(r, delayMs));
             }
             params.emits.write(text);
-            params.emits.complete();
+            params.emits.complete("");
             return;
           }
           return real(params);
@@ -114,7 +164,25 @@ class Rxai extends BaseAgent {
     this.idb = options.idb;
     this.historyMessageMode = options.historyMessageMode ?? "aggregated";
 
-    options.idb?.getPlans().then((plans) => {
+    if (options.compaction) {
+      this.compactionConfig = resolveCompactionConfig(options.compaction);
+      // compaction 内的 contextWindow 优先；其次取顶层 contextWindow
+      this.contextWindow =
+        this.compactionConfig.contextWindow ?? options.contextWindow ?? null;
+      // 压缩边界绑定 IDB，并异步恢复持久化状态（不阻塞构造）
+      this.compactionBoundary = new CompactionBoundary(options.idb);
+    } else if (options.contextWindow) {
+      // 仅追踪用量，不压缩
+      this.contextWindow = options.contextWindow;
+    }
+
+    const boundaryReady = this.compactionBoundary.restore();
+
+    Promise.all([
+      options.idb?.getPlans() ?? Promise.resolve([]),
+      boundaryReady,
+    ]).then(([plans]) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       plans.forEach(({ plan, content }: any) => {
         const startMessages = [...this.cacheMessages];
         // TODO: idb类型定义补充
@@ -140,7 +208,10 @@ class Rxai extends BaseAgent {
               mode: this.historyMessageMode,
             });
           },
-          historyMessageMode: this.historyMessageMode,
+          historyMessageMode:
+            this.historyMessageMode === "full"
+              ? "expanded"
+              : this.historyMessageMode,
           attachments: plan.content.attachments,
           presetMessages: plan.content.presetMessages,
           presetHistoryMessages: plan.content.presetHistoryMessages,
@@ -159,6 +230,11 @@ class Rxai extends BaseAgent {
 
       if (this.cacheMessages.length) {
         this.events.emit("plan", this.cacheMessages);
+
+        // 历史恢复后，emit 一次持久化的峰值统计给 UI
+        if (this.contextWindow) {
+          this.emitCompactionStats();
+        }
       }
     });
   }
@@ -242,7 +318,8 @@ class Rxai extends BaseAgent {
           mode: effectiveHistoryMode,
         });
       },
-      historyMessageMode: effectiveHistoryMode,
+      historyMessageMode:
+        effectiveHistoryMode === "full" ? "expanded" : effectiveHistoryMode,
       formatUserMessage,
       attachments,
       presetMessages: presetMessages || [],
@@ -255,6 +332,29 @@ class Rxai extends BaseAgent {
       planningCheck,
       blockId,
       maxAppendDepth,
+      onContextMessages: this.contextWindow
+        ? (messages) => {
+            const usedTokens = estimateTokens(JSON.stringify(messages));
+            const peaked = this.compactionBoundary.recordPeak(usedTokens);
+            // 峰值有更新时才通知 UI
+            if (peaked) {
+              this.emitCompactionStats();
+            }
+            // 达到阈值时后台触发压缩（防并发，仅在开启压缩时有效）
+            if (
+              this.compactionConfig &&
+              shouldCompact(usedTokens, this.compactionConfig) &&
+              !this.compactionTask
+            ) {
+              this.compactionTask = this.compact()
+                .then(() => {})
+                .catch(() => {})
+                .finally(() => {
+                  this.compactionTask = null;
+                });
+            }
+          }
+        : undefined,
     });
 
     this.cacheMessages = startMessages
@@ -269,10 +369,22 @@ class Rxai extends BaseAgent {
     );
 
     await planningAgent.run();
+
+    // summaryMessage 生成完毕后，重新 emit stats（summaryMessage 更短，token 占用变化）
+    if (this.compactionConfig) {
+      planningAgent.events.on(
+        "summaryReady",
+        () => {
+          this.recomputeAndEmitStats();
+        },
+        false,
+      );
+    }
   }
 
   async clear() {
     this.cacheMessages = [];
+    this.compactionBoundary.reset(); // 同时重置峰值
     this.events.emit("plan", this.cacheMessages);
 
     this.idb?.clear();
@@ -289,8 +401,140 @@ class Rxai extends BaseAgent {
     historyMessages: PlanningAgent[];
     filenames?: string[];
     mode?: HistoryMessageMode;
-  }) {
-    return getHistoryMessages(params);
+  }): ChatMessages {
+    const { historyMessages, filenames, mode = "aggregated" } = params;
+    const config = this.compactionConfig;
+
+    // 未启用压缩：走原有逻辑
+    if (!config) {
+      return getHistoryMessages({ historyMessages, filenames, mode });
+    }
+
+    // ── 按阈值将 agent 分区为 kept / dropped ──────────────────────────────
+    const { kept, dropped } = partition(historyMessages, config, (agent) =>
+      estimateAgentTokens(agent, mode),
+    );
+
+    // 用裁剪后的列表构建消息
+    const messages = getHistoryMessages({
+      historyMessages: kept,
+      filenames,
+      mode,
+    });
+
+    // ── 有 dropped 且已有压缩摘要时，将摘要注入到历史消息头部 ────────────────
+    if (dropped.length === 0 || !this.compactionBoundary.hasSummary()) {
+      return messages;
+    }
+
+    return injectCompactionSummary(
+      messages,
+      this.compactionBoundary.getSummary(),
+      mode,
+    );
+  }
+
+  /**
+   * 压缩历史记录：将超出阈值的旧 agent 调用 LLM 生成摘要并缓存。
+   *
+   * - 自动触发：工具调用后上下文 token 超过阈值时，在后台自动触发
+   * - 手动触发：外部可直接 await rxai.compact()，例如接入"压缩历史"工具指令
+   */
+  async compact(): Promise<{
+    /** 本次压缩了几条 agent（0 表示无需压缩） */
+    compressedCount: number;
+    /** 生成的新增摘要文本 */
+    summary: string;
+    /** true = 没有新的 agent 需要压缩，跳过 */
+    skipped: boolean;
+  }> {
+    if (!this.compactionConfig) {
+      return { compressedCount: 0, summary: "", skipped: true };
+    }
+
+    const { dropped } = partition(
+      this.cacheMessages,
+      this.compactionConfig,
+      (agent) => estimateAgentTokens(agent, this.historyMessageMode),
+    );
+
+    // 过滤出尚未被压缩的 agent
+    const newDropped = this.compactionBoundary.filterUnsummarized(dropped);
+
+    if (newDropped.length === 0) {
+      return { compressedCount: 0, summary: "", skipped: true };
+    }
+
+    const texts = newDropped
+      .map((a) => a.getMessages()?.message ?? "")
+      .filter(Boolean);
+
+    const newSummary = await this.compactHistory(texts);
+
+    // 将新摘要和 uuid 追加到压缩边界（含 IDB 持久化）
+    await this.compactionBoundary.append(
+      newSummary,
+      newDropped.map((a) => a.id),
+    );
+
+    // 压缩完成后重置峰值，并向 UI 汇报最新统计
+    this.compactionBoundary.resetPeak();
+    this.emitCompactionStats();
+
+    return {
+      compressedCount: newDropped.length,
+      summary: newSummary,
+      skipped: false,
+    };
+  }
+
+  /**
+   * 计算并 emit 当前上下文窗口统计，供 UI 实时展示。
+   * usedTokens 取当前峰值（最近一次工具调用的上下文估算）。
+   */
+  private emitCompactionStats(): void {
+    if (!this.contextWindow) return;
+    const stats = this.compactionBoundary.computeStats(
+      this.compactionBoundary.getPeak(),
+      this.contextWindow,
+    );
+    this.events.emit("compactionStats", stats);
+  }
+
+  /**
+   * summaryMessage 生成后重新 emit stats。
+   * summaryMessage 更短，token 占用变化，峰值不变，只需重新广播一次统计。
+   */
+  private recomputeAndEmitStats(): void {
+    this.emitCompactionStats();
+  }
+
+  /** 调用 LLM 将多条历史文本压缩（compaction）为摘要字符串 */
+  private async compactHistory(texts: string[]): Promise<string> {
+    const historyBlock = texts
+      .map((t, i) => `## 第${i + 1}条\n${t}`)
+      .join("\n\n");
+
+    const prompt =
+      `你是对话历史压缩专家。请将以下多轮历史对话压缩为一段结构化摘要，` +
+      `保留关键决策、重要结论、用户需求及完成状态，去除冗余细节。` +
+      `输出纯文本，不要 JSON，不要 Markdown 代码块。\n\n` +
+      `<历史对话>\n${historyBlock}\n</历史对话>`;
+
+    const result = await this.requestInstance.requestAsStream({
+      messages: [{ role: "user", content: prompt }],
+      emits: {
+        write: () => {},
+        complete: () => {},
+        error: () => {},
+        cancel: () => {},
+      },
+    });
+
+    if (result.type === "complete") {
+      return result.content.trim();
+    }
+    return "";
   }
 }
 
@@ -430,15 +674,137 @@ function generateExpandedHistoryMessages(params: {
   return result;
 }
 
+/**
+ * full 模式：将所有历史记录展开为多轮 user/assistant 对，全量原始内容，无摘要折叠。
+ * 附件图片随 user 消息一同携带。
+ * 配合 compaction 使用时，被压缩的早期历史由 injectCompactionSummary 注入头部。
+ */
+function generateFullHistoryMessages(params: {
+  historyMessages: PlanningAgent[];
+}): ChatMessages {
+  const result: ChatMessages = [];
+
+  params.historyMessages.forEach((planAgent) => {
+    const messages = planAgent.getMessages();
+    if (!messages) return;
+
+    const { message, userMessageText } = messages;
+
+    type PlanOpts = {
+      options?: { message?: string; attachments?: { content: string }[] };
+    };
+    const planOpts = (planAgent as unknown as PlanOpts).options;
+    const userText =
+      (typeof userMessageText === "string" ? userMessageText : null) ??
+      planOpts?.message ??
+      "";
+    const userAttachments = planOpts?.attachments ?? [];
+
+    const userContentParts: Array<{
+      type: string;
+      text?: string;
+      image_url?: { url: string };
+    }> = [{ type: "text", text: userText }];
+
+    userAttachments.forEach((att: { content: string }) => {
+      userContentParts.push({
+        type: "image_url",
+        image_url: { url: att.content },
+      });
+    });
+
+    result.push({
+      role: "user",
+      content:
+        userContentParts.length === 1
+          ? userContentParts[0].text!
+          : userContentParts,
+    });
+
+    // assistant：完整原始内容，无 XML 包裹
+    result.push({ role: "assistant", content: message });
+  });
+
+  return result;
+}
+
+/**
+ * 将 compaction 摘要注入到历史消息头部，注入方式随 mode 调整：
+ * - aggregated：在大文本块头部插入摘要段落（保持单条 user 消息结构）
+ * - expanded / full：在多轮列表最前插入 user/assistant 对
+ */
+function injectCompactionSummary(
+  messages: ChatMessages,
+  summary: string,
+  mode: HistoryMessageMode,
+): ChatMessages {
+  if (mode === "aggregated") {
+    // aggregated 只有一条 user 消息，将摘要嵌入文本块头部
+    const [first, ...rest] = messages;
+    if (!first) return messages;
+
+    const summarySection = `## 早期历史摘要（已压缩）\n${summary}\n\n---\n\n`;
+
+    if (typeof first.content === "string") {
+      return [{ ...first, content: summarySection + first.content }, ...rest];
+    }
+    if (Array.isArray(first.content)) {
+      const parts = (first.content as { type: string; text?: string }[]).map(
+        (p) =>
+          p.type === "text"
+            ? { ...p, text: summarySection + (p.text ?? "") }
+            : p,
+      );
+      return [{ ...first, content: parts }, ...rest];
+    }
+    return messages;
+  }
+
+  // expanded / full：插入 user/assistant 对
+  return [
+    {
+      role: "user",
+      content: `# 早期历史摘要（已压缩）\n${summary}`,
+    },
+    {
+      role: "assistant",
+      content: "已了解早期历史背景，将基于此继续协助。",
+    },
+    ...messages,
+  ];
+}
+
+/**
+ * 估算单条 PlanningAgent 在指定 mode 下实际传给 LLM 的 token 体积。
+ *
+ * 直接复用各 mode 对应的消息渲染函数，保证估算结果与真实请求同源：
+ * - aggregated：走聚合文本渲染，用 summaryMessage（若有）
+ * - expanded：渲染为 user+assistant 对，assistant 用 summaryMessage（若有）
+ * - full：渲染为 user+assistant 对，assistant 始终用完整 message
+ *
+ * 新增 mode 时只需在此扩展，partition 等调用方无需改动。
+ */
+function estimateAgentTokens(
+  agent: PlanningAgent,
+  mode: HistoryMessageMode,
+): number {
+  // 渲染单条 agent 的实际消息，与 getHistoryMessages 完全同源
+  const messages = getHistoryMessages({ historyMessages: [agent], mode });
+  return estimateTokens(JSON.stringify(messages));
+}
+
 function getHistoryMessages(params: {
   historyMessages: PlanningAgent[];
   filenames?: string[];
-  mode?: "aggregated" | "expanded";
+  mode?: HistoryMessageMode;
 }) {
   const { historyMessages, filenames, mode = "aggregated" } = params;
 
   if (!historyMessages.length) {
     return [];
+  }
+  if (mode === "full") {
+    return generateFullHistoryMessages({ historyMessages });
   }
   if (mode === "expanded") {
     return generateExpandedHistoryMessages({ historyMessages, filenames });

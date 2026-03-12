@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/ban-ts-comment */
-import { getSystemPrompt } from "../prompt/planning";
+import { getSystemPrompt, getContinuePlanningPrompt } from "../prompt/planning";
 import { BaseAgent, BaseAgentOptions } from "./base";
 import { parseFileBlocks } from "../tool/util";
 import { getToolPrompt } from "../prompt/tool";
@@ -12,9 +12,8 @@ import {
   RequestError,
   ToolRetryError,
   RetryError,
-  createExecuteContext,
-  type ExecuteContext,
 } from "../error/base";
+import { createExecuteContext } from "../context";
 import { retry } from "../utils/retry";
 
 // 是否将 guidePrompt 注入到系统提示词中
@@ -59,6 +58,11 @@ interface PlanningAgentOptions extends BaseAgentOptions {
     | null;
   /** 追加命令的最大深度，防止循环追加；不传则使用默认值 */
   maxAppendDepth?: number;
+  /**
+   * 每次工具调用前 getLLMMessages 组装完成后回调，携带本次请求的完整消息列表。
+   * 调用方可据此估算上下文 token 用量，用于 compaction 触发判断。
+   */
+  onContextMessages?: (messages: ChatMessages) => void;
 }
 
 type PlanStatus = "pending" | "success" | "error" | "aborted";
@@ -77,10 +81,16 @@ type EventsKV = {
   userMessage: ReturnType<PlanningAgent["getUserMessage"]>;
   startTime: number;
   summary: string;
+  /** summaryMessage 生成完毕，携带摘要文本 */
+  summaryReady: string;
   commands: PlanningAgent["commands"];
   error: string;
   status: PlanStatus;
   planningMessage: string;
+  /** 触发 LLM 续写规划时发出，携带提示文本 */
+  continue: { message: string };
+  /** LLM 续写规划结束时发出（无论成功/跳过/出错） */
+  continueEnd: void;
 };
 
 /**
@@ -112,7 +122,9 @@ class PlanningAgent extends BaseAgent {
       display: string;
       response: string;
     };
-    events?: Events<{ streamMessage: { message: string; status: string } }>;
+    events?: Events<{
+      streamMessage: { message: string; status: string };
+    }>;
   }[] = [];
   private filenames: string[] = [];
 
@@ -486,7 +498,7 @@ ${this.options.guidePrompt}
 
       const [error, response] = await this.tryCatch(async () => {
         try {
-          return await this.executeCommand(command);
+          return await this.executeCommand(command, index);
         } catch (e) {
           // 统一处理：根据错误类型决定重试策略
           if (e instanceof ToolRetryError && e.autoRetry && e.maxRetries > 0) {
@@ -499,7 +511,7 @@ ${this.options.guidePrompt}
             this.setCommands(this.commands, false);
             // 进入 catch 时已执行过 1 次，retry() 内部会再执行 (count+1) 次，故传 maxRetries-1 才能保证「1 次初始 + maxRetries 次重试」
             return await retry(
-              () => this.executeCommand(command),
+              () => this.executeCommand(command, index),
               Math.max(0, e.maxRetries - 1),
               (x) => x instanceof ToolRetryError,
             );
@@ -508,7 +520,7 @@ ${this.options.guidePrompt}
             const retries = e.maxRetries ?? this.requestInstance.maxRetries;
             if (retries > 0) {
               return await retry(
-                () => this.executeCommand(command),
+                () => this.executeCommand(command, index),
                 Math.max(0, retries - 1),
                 (x) => x instanceof RequestError,
               );
@@ -553,9 +565,18 @@ ${this.options.guidePrompt}
         this.setCommands(this.commands, false);
         this.setError(error);
       } else {
+        const { needsContinue, ...contentData } =
+          response as typeof response & {
+            needsContinue?: boolean;
+          };
         current.status = "success";
-        Object.assign(current.content, response);
+        Object.assign(current.content, contentData);
         this.setCommands(this.commands, true);
+
+        // content 已写回 command，此时触发续写规划，LLM 能看到本步输出
+        if (needsContinue) {
+          await this.continuePlanning();
+        }
       }
 
       current.endTime = new Date().getTime();
@@ -626,7 +647,7 @@ ${this.options.guidePrompt}
   }
 
   /**
-   * 执行工具并规范化返回值（含 appendCommands）
+   * 执行工具并规范化返回值（含 appendCommands / needsContinue）
    */
   private async toolExecute(
     tool: Tool,
@@ -637,25 +658,38 @@ ${this.options.guidePrompt}
       replaceContent: string;
       getUserMessage?: () => ReturnType<PlanningAgent["getUserMessage"]>;
     },
+    commandIndex: number,
   ): Promise<{
     llm: string;
     display: string;
     appendCommands?: AppendCommand[];
+    needsContinue?: boolean;
   }> {
-    const context = createExecuteContext();
+    const context = createExecuteContext({
+      currentIndex: commandIndex,
+      commands: this.commands.map((c) => ({
+        name: c.argv[1],
+        params: c.argv[2],
+      })),
+    });
     const [error, response] = await this.tryCatch(() => {
       if (tool.name === "get-history-records") {
         // @ts-ignore
-        this.filenames = (tool.execute as (p: any, c?: ExecuteContext) => any)(
+        const raw = (tool.execute as (p: any, c?: ExecuteContext) => any)(
           params,
           context,
         );
+        this.filenames = raw?.fileNames ?? [];
         const mode = this.options.historyMessageMode ?? "aggregated";
         const tip =
           mode === "expanded"
-            ? `已读取历史对话记录：${(this.filenames as string[]).join(", ")}，后续将基于完整历史上下文继续`
+            ? `已读取历史对话记录：${this.filenames.join(", ")}，后续将基于完整历史上下文继续`
             : "已读取历史对话记录";
-        return tip;
+        return {
+          llmContent: tip,
+          displayContent: tip,
+          needsContinue: raw?.needsContinue,
+        };
       }
       return (tool.execute as (p: any, c?: ExecuteContext) => any)(
         params as any,
@@ -667,27 +701,96 @@ ${this.options.guidePrompt}
       throw error;
     }
 
+    let result: {
+      llm: string;
+      display: string;
+      appendCommands?: AppendCommand[];
+      needsContinue?: boolean;
+    };
+
     if (typeof response === "string") {
-      return { llm: response, display: response };
+      result = { llm: response, display: response };
+    } else {
+      const obj = response as {
+        llmContent: string;
+        displayContent: string;
+        appendCommands?: AppendCommand[];
+        needsContinue?: boolean;
+      };
+      result = {
+        llm: obj.llmContent,
+        display: obj.displayContent,
+        appendCommands: obj.appendCommands,
+        needsContinue: obj.needsContinue,
+      };
     }
 
-    const obj = response as {
-      llmContent: string;
-      displayContent: string;
-      appendCommands?: AppendCommand[];
-    };
-    return {
-      llm: obj.llmContent,
-      display: obj.displayContent,
-      appendCommands: obj.appendCommands,
-    };
+    return result;
+  }
+
+  /**
+   * 触发 LLM 续写规划：基于当前执行上下文，让 LLM 自主决定追加哪些工具
+   */
+  private async continuePlanning() {
+    if (this.appendDepth >= this.maxAppendDepth) {
+      console.warn(
+        `[PlanningAgent] 续写深度已达上限 ${this.maxAppendDepth}，忽略本次续写`,
+      );
+      return;
+    }
+    this.appendDepth++;
+
+    this.events.emit("continue", { message: "计划下一步..." });
+
+    try {
+      const response = await this.request({
+        messages: await this.getLLMMessages({
+          start: [
+            {
+              role: "system",
+              content: getContinuePlanningPrompt({
+                tools: this.options.tools,
+              }),
+            },
+            ...this.getHistoryMessages(),
+          ],
+        }),
+        emits: this.getEmits(),
+      });
+
+      if (
+        response instanceof RequestError ||
+        response instanceof ToolRetryError ||
+        response instanceof RetryError
+      ) {
+        return;
+      }
+
+      if (typeof response !== "string" || response.trim() === "DONE") {
+        return;
+      }
+
+      const newCommands = parseBashCommands(response);
+      if (!newCommands.length) {
+        return;
+      }
+
+      this.handleAppendCommands(
+        newCommands.map(([, toolName, params]) => ({ toolName, params })),
+      );
+    } finally {
+      this.events.emit("continueEnd", undefined);
+    }
   }
 
   /**
    * 执行命令
    * 目前均为node命令，后续可能扩展
    */
-  private async executeCommand(command: PlanningAgent["commands"][number]) {
+  private async executeCommand(
+    command: PlanningAgent["commands"][number],
+    commandIndex: number,
+  ) {
     const { argv } = command;
     const [, name, params = {}] = argv;
 
@@ -714,16 +817,21 @@ ${this.options.guidePrompt}
     };
 
     if (!toolPrompt) {
-      const result = await this.toolExecute(tool, {
-        params,
-        files: [] as unknown as Files,
-        content: "",
-        replaceContent: "",
-        getUserMessage: () => this.getUserMessage(),
-      });
-      const { appendCommands, ...contentData } = result;
+      const result = await this.toolExecute(
+        tool,
+        {
+          params,
+          files: [] as unknown as Files,
+          content: "",
+          replaceContent: "",
+          getUserMessage: () => this.getUserMessage(),
+        },
+        commandIndex,
+      );
+      const { appendCommands, needsContinue, ...contentData } = result;
       Object.assign(content, contentData);
       this.handleAppendCommands(appendCommands);
+      if (needsContinue) Object.assign(content, { needsContinue: true });
     } else {
       let streamMessage = "";
       let streamError: any = null;
@@ -741,7 +849,13 @@ ${this.options.guidePrompt}
             try {
               const { content: replaceContent, files } =
                 parseFileBlocks(content);
-              const execContext = createExecuteContext();
+              const execContext = createExecuteContext({
+                currentIndex: commandIndex,
+                commands: this.commands.map((c) => ({
+                  name: c.argv[1],
+                  params: c.argv[2],
+                })),
+              });
               const res = tool.stream!(
                 {
                   files,
@@ -794,6 +908,9 @@ ${this.options.guidePrompt}
           ...historyMessages,
         ],
       });
+
+      // 上报本次完整消息列表，供调用方估算 token 用量（compaction 触发判断）
+      this.options.onContextMessages?.(llmMessages);
 
       // 检查是否有附件：当前请求的附件 + 历史记录中带进来的附件
       // 只要 content 是数组结构就说明包含了附件
@@ -849,16 +966,21 @@ ${this.options.guidePrompt}
       // 解析文件
       const { files, content: replaceContent } = parseFileBlocks(response);
 
-      const result = await this.toolExecute(tool, {
-        params,
-        files,
-        content: response,
-        replaceContent,
-        getUserMessage: () => this.getUserMessage(),
-      });
-      const { appendCommands, ...contentData } = result;
+      const result = await this.toolExecute(
+        tool,
+        {
+          params,
+          files,
+          content: response,
+          replaceContent,
+          getUserMessage: () => this.getUserMessage(),
+        },
+        commandIndex,
+      );
+      const { appendCommands, needsContinue, ...contentData } = result;
       Object.assign(content, contentData, { response });
       this.handleAppendCommands(appendCommands);
+      if (needsContinue) Object.assign(content, { needsContinue: true });
     }
 
     return content;
@@ -1443,7 +1565,7 @@ ${this.options.guidePrompt}
 
   private summaryLoading = false;
 
-  summary() {
+  summary(onComplete?: (summaryMessage: string) => void) {
     if (this.summaryLoading) {
       return;
     }
@@ -1514,6 +1636,8 @@ ${message}
         if (res.type === "complete") {
           this.summaryMessage = res.content;
           this.idbPubContent("summaryMessage", res.content);
+          this.events.emit("summaryReady", res.content);
+          onComplete?.(res.content);
         }
       })
       .catch((e) => {

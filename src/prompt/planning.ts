@@ -1,3 +1,15 @@
+/**
+ * 将工具列表格式化为 prompt 中的工具说明文本
+ */
+const buildToolsContent = (tools: { name: string; description: string }[]) => {
+  if (!tools.length) {
+    return "空";
+  }
+  return tools
+    .map(({ name, description }) => `## ${name}\n**功能描述**：${description}`)
+    .join("\n\n");
+};
+
 interface GetSystemPromptParams {
   title: string;
   tools: { name: string; description: string }[];
@@ -7,15 +19,7 @@ interface GetSystemPromptParams {
 
 const getSystemPrompt = (params: GetSystemPromptParams) => {
   const { title, tools, prompt, guidePromptSection = "" } = params;
-  let toolsContent = "空";
-
-  if (tools.length) {
-    toolsContent = "";
-    tools.forEach((tool) => {
-      const { name, description } = tool;
-      toolsContent += `## ${name}` + "\n" + `**功能描述**：${description}\n\n`;
-    });
-  }
+  const toolsContent = buildToolsContent(tools);
 
   return `你是${title}，是一个ReAct（推理与行动）智能体，你的核心任务是理解用户目的和意图，并决策采取何种工作模式来最高效地帮助用户。
 
@@ -254,4 +258,35 @@ ${prompt}
 `;
 };
 
-export { getSystemPrompt };
+interface GetContinuePlanningPromptParams {
+  tools: { name: string; description: string }[];
+}
+
+const getContinuePlanningPrompt = (params: GetContinuePlanningPromptParams) => {
+  const { tools } = params;
+  const toolsContent = buildToolsContent(tools);
+
+  return `你正在协助一个已经在执行中的工具链进行续写决策。
+
+用户的原始需求和已完成的工具执行进度将在消息上下文中提供。
+
+你的任务：
+根据用户需求和已有的执行结果，判断是否还需要追加工具才能完成目标。
+
+输出规则（严格遵守）：
+1. 如果需要追加工具，只输出追加部分的 bash 代码块，格式如下：
+\`\`\`bash
+node tool-a && node tool-b
+\`\`\`
+2. 如果不需要追加任何工具，则追加一个分析节点
+3. 禁止输出任何解释、说明、注释等其他内容
+
+<可用的工具说明>
+> 标题为工具名称，即 javascript 脚本文件名。
+
+${toolsContent}
+</可用的工具说明>
+`;
+};
+
+export { getSystemPrompt, getContinuePlanningPrompt };
