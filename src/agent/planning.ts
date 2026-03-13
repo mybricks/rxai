@@ -98,7 +98,7 @@ type EventsKV = {
  * 执行计划
  */
 class PlanningAgent extends BaseAgent {
-  private startTime: number = 0;
+  startTime: number = 0;
   private endTime: number = 0;
   private llmContent: string = "";
   private loading: boolean = false;
