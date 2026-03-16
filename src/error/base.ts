@@ -45,8 +45,6 @@ export interface ToolRetryErrorParams {
   displayContent: string;
   /** 是否自动重试，默认 true。false 时只展示错误并提供重试按钮 */
   autoRetry?: boolean;
-  /** 是否追加"请根据上述错误信息重试"，默认 true */
-  appendRetryMessage?: boolean;
   /** 重试次数，默认 1（仅在 autoRetry 为 true 时生效） */
   maxRetries?: number;
 }
@@ -56,7 +54,6 @@ class ToolRetryError extends Error {
   readonly displayContent: string;
   readonly autoRetry: boolean;
   readonly maxRetries: number;
-  private readonly appendRetryMessage: boolean;
 
   constructor(params: ToolRetryErrorParams | string) {
     if (typeof params === "string") {
@@ -64,32 +61,27 @@ class ToolRetryError extends Error {
       this.llmContent = params;
       this.displayContent = params;
       this.autoRetry = true;
-      this.appendRetryMessage = true;
       this.maxRetries = 1;
     } else {
       const {
         llmContent,
         displayContent,
         autoRetry = true,
-        appendRetryMessage = true,
         maxRetries = 1,
       } = params;
       super(llmContent);
       this.llmContent = llmContent;
       this.displayContent = displayContent;
       this.autoRetry = autoRetry;
-      this.appendRetryMessage = appendRetryMessage;
       this.maxRetries = Math.max(0, maxRetries);
     }
     this.name = "ToolRetryError";
     Object.setPrototypeOf(this, ToolRetryError.prototype);
   }
 
-  /** 供规划阶段写入当前步骤内容：llmContent + 追加重试提示（若启用） */
+  /** 供规划阶段写入当前步骤内容：llmContent + 追加重试提示 */
   getLlmContentWithRetryMessage(): string {
-    return this.appendRetryMessage
-      ? this.llmContent + RETRY_APPEND_MESSAGE
-      : this.llmContent;
+    return this.llmContent + RETRY_APPEND_MESSAGE;
   }
 
   toJSON() {
@@ -172,7 +164,6 @@ function RxaiError(
                     : "工具执行错误",
               displayContent: display,
               autoRetry: false,
-              appendRetryMessage: false,
               maxRetries: 0,
             }
           : typeof message === "string"

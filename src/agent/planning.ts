@@ -423,13 +423,6 @@ ${this.options.guidePrompt}
 
       this.validateBashCommandTools(bashCommands);
 
-      if (
-        bashCommands.length === 1 &&
-        bashCommands[0][1] === "get-history-records"
-      ) {
-        bashCommands.push(["node", "analyse-and-answer", {}]);
-      }
-
       this.setCommands(
         bashCommands.map((argv) => {
           return {
@@ -511,7 +504,8 @@ ${this.options.guidePrompt}
             this.setCommands(this.commands, false);
             // 进入 catch 时已执行过 1 次，retry() 内部会再执行 (count+1) 次，故传 maxRetries-1 才能保证「1 次初始 + maxRetries 次重试」
             return await retry(
-              () => this.executeCommand(command, index),
+              // attempt 在 retry() 内部从 0 开始，但此处已是「第 1 次重试」，故 +1 对齐语义
+              (attempt) => this.executeCommand(command, index, attempt + 1),
               Math.max(0, e.maxRetries - 1),
               (x) => x instanceof ToolRetryError,
             );
@@ -520,7 +514,7 @@ ${this.options.guidePrompt}
             const retries = e.maxRetries ?? this.requestInstance.maxRetries;
             if (retries > 0) {
               return await retry(
-                () => this.executeCommand(command, index),
+                (attempt) => this.executeCommand(command, index, attempt + 1),
                 Math.max(0, retries - 1),
                 (x) => x instanceof RequestError,
               );
@@ -790,6 +784,7 @@ ${this.options.guidePrompt}
   private async executeCommand(
     command: PlanningAgent["commands"][number],
     commandIndex: number,
+    retryCount: number = 0,
   ) {
     const { argv } = command;
     const [, name, params = {}] = argv;
@@ -837,7 +832,11 @@ ${this.options.guidePrompt}
       let streamError: any = null;
 
       const stream = tool.stream
-        ? (content: string, status: "start" | "ing" | "complete") => {
+        ? (
+            content: string,
+            status: "start" | "ing" | "complete",
+            ctx?: ExecuteContext,
+          ) => {
             if (streamError) {
               return;
             }
@@ -849,16 +848,20 @@ ${this.options.guidePrompt}
             try {
               const { content: replaceContent, files } =
                 parseFileBlocks(content);
-              const execContext = createExecuteContext({
-                currentIndex: commandIndex,
-                commands: this.commands.map((c) => ({
-                  name: c.argv[1],
-                  params: c.argv[2],
-                })),
-              });
+              const execContext =
+                ctx ||
+                createExecuteContext({
+                  currentIndex: commandIndex,
+                  commands: this.commands.map((c) => ({
+                    name: c.argv[1],
+                    params: c.argv[2],
+                  })),
+                  retryCount,
+                  attachments: [],
+                });
               const res = tool.stream!(
                 {
-                  files,
+                  files: files as Files,
                   status,
                   replaceContent,
                   content,
@@ -912,15 +915,48 @@ ${this.options.guidePrompt}
       // 上报本次完整消息列表，供调用方估算 token 用量（compaction 触发判断）
       this.options.onContextMessages?.(llmMessages);
 
-      // 检查是否有附件：当前请求的附件 + 历史记录中带进来的附件
-      // 只要 content 是数组结构就说明包含了附件
-      const hasHistoryAttachments = historyMessages.some((msg) => {
-        return Array.isArray(msg.content);
+      // 提取所有附件供 ExecuteContext 使用
+      const attachmentsInfo: AttachmentInfo[] = [];
+
+      // 当前请求的附件
+      if (this.options.attachments?.length) {
+        this.options.attachments.forEach((att) => {
+          attachmentsInfo.push({
+            type: att.type,
+            format: att.content.startsWith("data:") ? "base64" : "url",
+            scope: "current",
+            title: att.title,
+            size: att.size,
+          });
+        });
+      }
+
+      // 历史记录中的附件（简易判断提取）
+      historyMessages.forEach((msg) => {
+        if (Array.isArray(msg.content)) {
+          msg.content.forEach((item: any) => {
+            if (item.type === "image_url" && item.image_url?.url) {
+              attachmentsInfo.push({
+                type: "image",
+                format: item.image_url.url.startsWith("data:")
+                  ? "base64"
+                  : "url",
+                scope: "history",
+              });
+            }
+          });
+        }
       });
 
-      const hasAttachments = !!(
-        this.options.attachments?.length || hasHistoryAttachments
-      );
+      const execContext = createExecuteContext({
+        currentIndex: commandIndex,
+        commands: this.commands.map((c) => ({
+          name: c.argv[1],
+          params: c.argv[2],
+        })),
+        retryCount,
+        attachments: attachmentsInfo,
+      });
 
       const response = await this.request({
         messages: llmMessages,
@@ -932,7 +968,7 @@ ${this.options.guidePrompt}
 
             streamMessage += chunk;
             command.content.response = streamMessage;
-            stream?.(streamMessage, "ing");
+            stream?.(streamMessage, "ing", execContext);
             // if (!stream) {
             //   command.events?.emit("streamMessage", {
             //     message: streamMessage,
@@ -942,12 +978,12 @@ ${this.options.guidePrompt}
             // }
           },
           complete: (content) => {
-            stream?.(content, "complete");
+            stream?.(content, "complete", execContext);
           },
         }),
         aiRole:
           typeof tool.aiRole === "function"
-            ? (tool.aiRole as any)?.({ params, hasAttachments })
+            ? (tool.aiRole as any)?.({ params }, execContext)
             : tool.aiRole,
       });
 
@@ -970,7 +1006,7 @@ ${this.options.guidePrompt}
         tool,
         {
           params,
-          files,
+          files: files as Files,
           content: response,
           replaceContent,
           getUserMessage: () => this.getUserMessage(),

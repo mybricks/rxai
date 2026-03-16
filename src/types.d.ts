@@ -50,6 +50,17 @@ interface AppendCommand {
   params?: Record<string, string>;
 }
 
+/** 附件的统一描述（用于 ExecuteContext.attachments） */
+interface AttachmentInfo {
+  type: "image" | string;
+  /** 内容格式：base64（data URI）或外部 url */
+  format: "base64" | "url";
+  /** 来源：current = 本轮请求，history = 历史记录 */
+  scope: "current" | "history";
+  title?: string;
+  size?: number;
+}
+
 /** execute / stream 的第二个参数，提供错误类等上下文，后续可扩展 */
 interface ExecuteContext {
   ToolRetryError: new (
@@ -58,7 +69,6 @@ interface ExecuteContext {
           llmContent: string;
           displayContent: string;
           autoRetry?: boolean;
-          appendRetryMessage?: boolean;
           maxRetries?: number;
         }
       | string,
@@ -75,6 +85,10 @@ interface ExecuteContext {
    * `currentIndex === commands.length - 1`
    */
   commands: ReadonlyArray<{ name: string; params?: Record<string, string> }>;
+  /** 当前是第几次重试（0 = 首次执行，1 = 第一次重试，以此类推） */
+  retryCount: number;
+  /** 当前上下文中的所有附件（含来源信息） */
+  attachments: AttachmentInfo[];
 }
 
 /** 工具 */
@@ -86,10 +100,12 @@ interface Tool {
   /** 工具对应的 AI 角色 */
   aiRole?:
     | AiRole
-    | ((ctx: {
-        params?: { [key: string]: string };
-        hasAttachments: boolean;
-      }) => AiRole);
+    | ((
+        ctx: {
+          params?: { [key: string]: string };
+        },
+        execCtx: ExecuteContext,
+      ) => AiRole);
   /**
    * 执行工具
    * @param params 执行参数
