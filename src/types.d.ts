@@ -122,7 +122,7 @@ interface Tool {
       userMessage?: { role: string; content: unknown };
     },
     context?: ExecuteContext,
-  ) => ToolExecuteResult;
+  ) => ToolExecuteResult | Promise<ToolExecuteResult>;
   stream?: (
     params: {
       files: Files;

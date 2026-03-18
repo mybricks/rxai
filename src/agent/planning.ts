@@ -569,7 +569,7 @@ ${this.options.guidePrompt}
 
         // content 已写回 command，此时触发续写规划，LLM 能看到本步输出
         if (needsContinue) {
-          await this.continuePlanning();
+          await this.continuePlanning(index);
         }
       }
 
@@ -585,11 +585,12 @@ ${this.options.guidePrompt}
   }
 
   /**
-   * 处理工具返回的追加命令，追加到执行队列末尾
+   * 处理工具返回的追加命令，插入到 insertAfterIndex 之后
    * @param appendCommands 要追加的命令列表
+   * @param insertAfterIndex 插入位置，新命令将插入到该索引之后
    * @returns 是否成功追加
    */
-  private handleAppendCommands(appendCommands?: AppendCommand[]): boolean {
+  private handleAppendCommands(appendCommands: AppendCommand[] | undefined, insertAfterIndex: number): boolean {
     if (!appendCommands?.length) {
       return false;
     }
@@ -635,7 +636,7 @@ ${this.options.guidePrompt}
       return false;
     }
 
-    this.commands.push(...newCommands);
+    this.commands.splice(insertAfterIndex + 1, 0, ...newCommands);
     this.setCommands(this.commands, true);
     return true;
   }
@@ -724,15 +725,16 @@ ${this.options.guidePrompt}
 
   /**
    * 触发 LLM 续写规划：基于当前执行上下文，让 LLM 自主决定追加哪些工具
+   * @param insertAfterIndex 新追加的步骤插入到该索引之后
    */
-  private async continuePlanning() {
+  private async continuePlanning(insertAfterIndex: number) {
     if (this.appendDepth >= this.maxAppendDepth) {
       console.warn(
         `[PlanningAgent] 续写深度已达上限 ${this.maxAppendDepth}，忽略本次续写`,
       );
       return;
     }
-    this.appendDepth++;
+    // appendDepth 由 handleAppendCommands 统一管理，此处不重复计数
 
     this.events.emit("continue", { message: "计划下一步..." });
 
@@ -771,6 +773,7 @@ ${this.options.guidePrompt}
 
       this.handleAppendCommands(
         newCommands.map(([, toolName, params]) => ({ toolName, params })),
+        insertAfterIndex,
       );
     } finally {
       this.events.emit("continueEnd", undefined);
@@ -825,7 +828,7 @@ ${this.options.guidePrompt}
       );
       const { appendCommands, needsContinue, ...contentData } = result;
       Object.assign(content, contentData);
-      this.handleAppendCommands(appendCommands);
+      this.handleAppendCommands(appendCommands, commandIndex);
       if (needsContinue) Object.assign(content, { needsContinue: true });
     } else {
       let streamMessage = "";
@@ -1015,7 +1018,7 @@ ${this.options.guidePrompt}
       );
       const { appendCommands, needsContinue, ...contentData } = result;
       Object.assign(content, contentData, { response });
-      this.handleAppendCommands(appendCommands);
+      this.handleAppendCommands(appendCommands, commandIndex);
       if (needsContinue) Object.assign(content, { needsContinue: true });
     }
 
