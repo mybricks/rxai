@@ -391,9 +391,15 @@ class Rxai extends BaseAgent {
 
   async export() {
     await this.idbRestoreReady;
-    return Promise.all(
-      this.cacheMessages.map((planAgent) => planAgent.export()),
-    );
+    return {
+      meta: {
+        rxaiKey: this.key,
+        historyMessageMode: this.historyMessageMode,
+      },
+      records: await Promise.all(
+        this.cacheMessages.map((planAgent) => planAgent.export()),
+      ),
+    };
   }
 
   getHistoryMessages(params: {
@@ -554,25 +560,77 @@ const HISTORY_MESSAGES_CONSTANTS = {
   SUMMARY_LABEL: "摘要",
   FULL_CONTENT_LABEL: "完整记录",
   /** 摘要时仅用结构化信息告知附件，不携带图片（聚合模式使用） */
-  ATTACHMENT_INFO_SUMMARY: "\n本记录包含 {count} 个附件",
+  ATTACHMENT_INFO_SUMMARY: "\n本记录包含附件：{attachmentInfo}",
   /** 完整记录时的图片说明（聚合模式展开后使用） */
   IMAGE_SECTION_TITLE: "\n### 当前记录携带{count}个图片",
   IMAGE_POSITION_TIP: "\n图片位置：{positions}",
   /**
    * 展开模式：assistant 消息的结构化包裹。
-   * - 包含附件数量用纯数字（0 表示无），语义中立。
+   * - 包含附件文件名和格式，无附件时标记为“无”。
    * - 摘要块加「请勿模仿此格式输出」约束，避免模型把它当回复格式学习。
    * - 图片位置说明已移至 user 消息尾部，assistant 不重复。
    */
   ASSISTANT_SUMMARY_META:
-    '当前消息为格式化后的摘要内容，仅供上下文阅读，请勿模仿此格式。\n<历史记录-摘要 类型="摘要" 文件名="{filename}" 附件数="{attachmentCount}" 可展开="是">\n',
+    '当前消息为格式化后的摘要内容，仅供上下文阅读，请勿模仿此格式。\n<历史记录-摘要 类型="摘要" 文件名="{filename}" 附件信息="{attachmentInfo}" 可展开="是">\n',
   ASSISTANT_SUMMARY_META_END: "\n</历史记录-摘要>",
   ASSISTANT_FULL_META:
-    '<历史记录-完整 类型="完整记录" 文件名="{filename}" 附件数="{attachmentCount}">\n\n',
+    '<历史记录-完整 类型="完整记录" 文件名="{filename}" 附件信息="{attachmentInfo}">\n\n',
   ASSISTANT_FULL_META_END: "\n</历史记录-完整>",
   /** 展开模式：user 消息尾部追加的附件提示（完整记录时） */
   USER_ATTACHMENT_HINT: "\n[本条消息包含 {count} 张附件图片]",
 };
+
+function formatHistoryAttachmentInfo(
+  attachments?: Array<{ title?: string; content?: string }>,
+): string {
+  if (!attachments?.length) {
+    return "无";
+  }
+
+  return attachments
+    .map((attachment, index) => {
+      // 1. 优先用 title
+      if (attachment.title?.trim()) {
+        const filename = attachment.title.trim();
+        const parts = filename.split(".");
+        const ext =
+          parts.length > 1 ? parts[parts.length - 1].toLowerCase() : "";
+        const format = ext || "unknown";
+        return `${filename}(${format})`;
+      }
+
+      const content = attachment.content ?? "";
+
+      // 2. base64 data URI：从 MIME 提取格式，例 data:image/png;base64,...
+      const dataUriMatch = content.match(/^data:([^;]+);/);
+      if (dataUriMatch) {
+        const mime = dataUriMatch[1]; // e.g. "image/png"
+        const [type, subtype] = mime.split("/");
+        const format = subtype ?? mime;
+        const label = type === "image" ? "未命名图片" : "未命名附件";
+        return `${label}${index + 1}(${format})`;
+      }
+
+      // 3. URL：从路径末尾提取文件名和扩展名
+      try {
+        const url = new URL(content);
+        const pathname = url.pathname;
+        const basename = pathname.split("/").filter(Boolean).pop() ?? "";
+        if (basename) {
+          const parts = basename.split(".");
+          const ext =
+            parts.length > 1 ? parts[parts.length - 1].toLowerCase() : "";
+          const format = ext || "unknown";
+          return `${basename}(${format})`;
+        }
+      } catch {
+        // 不是合法 URL，忽略
+      }
+
+      return `未命名附件${index + 1}(unknown)`;
+    })
+    .join("，");
+}
 
 /**
  * 展开模式：将历史记录生成为多轮 user/assistant 消息对，便于后续 agent 延续对话。
@@ -601,7 +659,10 @@ function generateExpandedHistoryMessages(params: {
 
     // 用户消息：优先使用格式化后的 userMessageText，否则回退到 options.message
     type PlanOpts = {
-      options?: { message?: string; attachments?: { content: string }[] };
+      options?: {
+        message?: string;
+        attachments?: { content: string; title?: string }[];
+      };
     };
     const planOpts = (planAgent as unknown as PlanOpts).options;
     const userText =
@@ -610,6 +671,7 @@ function generateExpandedHistoryMessages(params: {
       "";
     const userAttachments = planOpts?.attachments;
     const attachmentCount = attachments?.length ?? 0;
+    const attachmentInfo = formatHistoryAttachmentInfo(attachments);
 
     // user 消息：摘要时只带文本；展开时才附上实际图片并追加数量提示
     const userTextWithHint =
@@ -648,7 +710,7 @@ function generateExpandedHistoryMessages(params: {
       const meta = HISTORY_MESSAGES_CONSTANTS.ASSISTANT_FULL_META.replace(
         "{filename}",
         filename,
-      ).replace("{attachmentCount}", String(attachmentCount));
+      ).replace("{attachmentInfo}", attachmentInfo);
       assistantPayload =
         meta +
         assistantPayload +
@@ -657,7 +719,7 @@ function generateExpandedHistoryMessages(params: {
       const meta = HISTORY_MESSAGES_CONSTANTS.ASSISTANT_SUMMARY_META.replace(
         "{filename}",
         filename,
-      ).replace("{attachmentCount}", String(attachmentCount));
+      ).replace("{attachmentInfo}", attachmentInfo);
       assistantPayload =
         meta +
         assistantPayload +
@@ -872,8 +934,8 @@ function getHistoryMessages(params: {
         // 摘要：仅结构化告知包含附件，不携带图片
         recordText +=
           HISTORY_MESSAGES_CONSTANTS.ATTACHMENT_INFO_SUMMARY.replace(
-            "{count}",
-            attachments.length.toString(),
+            "{attachmentInfo}",
+            formatHistoryAttachmentInfo(attachments),
           );
       }
     }
