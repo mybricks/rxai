@@ -817,6 +817,7 @@ ${this.options.guidePrompt}
     } else {
       let streamMessage = "";
       let streamError: any = null;
+      const streamPromises: Promise<any>[] = [];
 
       const stream = tool.stream
         ? (
@@ -855,7 +856,25 @@ ${this.options.guidePrompt}
                 },
                 execContext,
               );
-              if (typeof res === "string") {
+              if (res instanceof Promise) {
+                streamPromises.push(
+                  res
+                    .then((val) => {
+                      if (typeof val === "string") {
+                        command.events?.emit("streamMessage", {
+                          message: val,
+                          status,
+                        });
+                      }
+                    })
+                    .catch((e) => {
+                      if (!streamError) {
+                        streamError = e;
+                        this.currentRequestCancel?.();
+                      }
+                    }),
+                );
+              } else if (typeof res === "string") {
                 command.events?.emit("streamMessage", {
                   message: res,
                   status,
@@ -873,7 +892,13 @@ ${this.options.guidePrompt}
             });
           };
 
-      stream?.("", "start");
+      const startRes = stream?.("", "start");
+      if (startRes instanceof Promise) {
+        const val = await startRes;
+        if (typeof val === "string") {
+          command.events?.emit("streamMessage", { message: val, status: "start" });
+        }
+      }
 
       // 执行 before 钩子
       if (tool.hooks?.before && typeof tool.hooks.before === "function") {
@@ -973,6 +998,11 @@ ${this.options.guidePrompt}
             ? (tool.aiRole as any)?.({ params }, execContext)
             : tool.aiRole,
       });
+
+      // 等待所有 async stream Promise 完成（含错误捕获）
+      if (streamPromises.length) {
+        await Promise.allSettled(streamPromises);
+      }
 
       if (streamError) {
         throw streamError;

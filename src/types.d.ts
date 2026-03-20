@@ -132,7 +132,7 @@ interface Tool {
       content: string;
     },
     context?: ExecuteContext,
-  ) => void | string;
+  ) => void | string | Promise<void | string>;
   streamThoughts?: boolean;
   hooks?: {
     /** 工具执行前钩子 */
