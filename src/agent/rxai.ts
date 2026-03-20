@@ -394,6 +394,7 @@ class Rxai extends BaseAgent {
     return {
       meta: {
         rxaiKey: this.key,
+        idbKey: this.idb?.getKey(),
         historyMessageMode: this.historyMessageMode,
       },
       records: await Promise.all(

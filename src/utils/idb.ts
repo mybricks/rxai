@@ -59,6 +59,10 @@ class IDB {
     return this.dbPromise;
   }
 
+  getKey() {
+    return this.key;
+  }
+
   private async init(dbName: string) {
     return openDB<MessagesDBSchema>(dbName, 1, {
       upgrade(db) {
