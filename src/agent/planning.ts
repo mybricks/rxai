@@ -253,20 +253,13 @@ class PlanningAgent extends BaseAgent {
             this.error = e;
           }
 
-          // RetryError 用自身的 maxRetries；进入 catch 已执行 1 次，故传 maxRetries-1
+          // RetryError：LLM 规划出错，带错误信息重新规划，重试 maxRetries-1 次（初始已执行 1 次）
+          // RequestError：网络错误已由 request.ts 内层 retry 消费，此处不再重试，直接报错
           if (e instanceof RetryError && e.maxRetries > 0) {
             return await retry(
               () => this.planning(),
               Math.max(0, e.maxRetries - 1),
               (x) => x instanceof RetryError,
-            );
-          }
-          // RequestError 用 requestInstance.maxRetries
-          if (e instanceof RequestError) {
-            return await retry(
-              () => this.planning(),
-              Math.max(0, this.options.requestInstance.maxRetries - 1),
-              (x) => x instanceof RequestError,
             );
           }
           throw e;
@@ -510,16 +503,7 @@ ${this.options.guidePrompt}
               (x) => x instanceof ToolRetryError,
             );
           }
-          if (e instanceof RequestError) {
-            const retries = e.maxRetries ?? this.requestInstance.maxRetries;
-            if (retries > 0) {
-              return await retry(
-                (attempt) => this.executeCommand(command, index, attempt + 1),
-                Math.max(0, retries - 1),
-                (x) => x instanceof RequestError,
-              );
-            }
-          }
+          // RequestError：网络重试已由 request.ts 内层 retry 消费，此处不再重试，直接抛出
           throw e;
         }
       }, true);
