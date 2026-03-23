@@ -386,6 +386,30 @@ class Rxai extends BaseAgent {
     }
   }
 
+  /**
+   * 从指定 planAgent uuid 处截断 cacheMessages，删除该 uuid 对应的 plan 及之后的所有 plan。
+   * - 若 uuid 不存在则直接返回，不做任何操作。
+   * - 被删除的 plan 若仍在运行，会先调用 destroy() 终止执行。
+   * - 同步清理 idb 中对应的持久化数据并更新顺序。
+   */
+  async truncateFrom(planAgentId: string): Promise<void> {
+    await this.idbRestoreReady;
+
+    const foundIndex = this.cacheMessages.findIndex(
+      (planAgent) => planAgent.id === planAgentId,
+    );
+
+    if (foundIndex === -1) return;
+
+    const toDelete = this.cacheMessages.slice(foundIndex);
+    toDelete.forEach((planAgent) => planAgent.destroy());
+
+    this.cacheMessages = this.cacheMessages.slice(0, foundIndex);
+    this.idb?.clear(toDelete);
+    this.idb?.updateOrder(this.cacheMessages.map((planAgent) => planAgent.id));
+    this.events.emit("plan", this.cacheMessages);
+  }
+
   async clear() {
     await this.idbRestoreReady;
     this.cacheMessages = [];
