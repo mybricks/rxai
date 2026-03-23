@@ -182,4 +182,17 @@ RxaiError.isTool = (e: unknown): e is ToolRetryError =>
   e instanceof ToolRetryError;
 RxaiError.isRetry = (e: unknown): e is RetryError => e instanceof RetryError;
 
-export { RxaiError, RequestError, ToolRetryError, RetryError };
+/**
+ * 取消错误：用户主动终止请求，不视为错误，不触发重试
+ */
+class CancelError extends Error {
+  readonly type = "cancel" as const;
+
+  constructor(message = "已取消") {
+    super(message);
+    this.name = "CancelError";
+    Object.setPrototypeOf(this, CancelError.prototype);
+  }
+}
+
+export { RxaiError, RequestError, ToolRetryError, RetryError, CancelError };

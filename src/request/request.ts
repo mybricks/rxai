@@ -1,4 +1,4 @@
-import { RequestError } from "../error/base";
+import { RequestError, CancelError } from "../error/base";
 import { retry } from "../utils/retry";
 
 interface RequestAsStreamParams {
@@ -28,8 +28,10 @@ class Request {
   ): Promise<
     | { type: "complete"; content: string }
     | { type: "error"; content: RequestError }
-    | { type: "cancel"; content: string }
+    | { type: "cancel"; content: CancelError }
   > {
+    let cancelled = false;
+
     const requestAsStream: () => ReturnType<
       Request["requestAsStream"]
     > = () => {
@@ -63,7 +65,9 @@ class Request {
           },
           cancel(cancel) {
             emits.cancel(() => {
+              cancelled = true;
               cancel();
+              resolve({ type: "cancel", content: new CancelError() });
             });
           },
         };
@@ -127,6 +131,7 @@ class Request {
       retry<ReturnType<Request["requestAsStream"]>>(
         requestAsStream,
         this.options.maxRetries,
+        () => !cancelled,
       )
         .then(resolve)
         .catch((error) => {

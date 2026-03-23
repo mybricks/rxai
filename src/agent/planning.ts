@@ -1,3 +1,5 @@
+/* eslint-disable @typescript-eslint/no-unused-vars */
+/* eslint-disable @typescript-eslint/no-explicit-any */
 /* eslint-disable @typescript-eslint/ban-ts-comment */
 import { getSystemPrompt, getContinuePlanningPrompt } from "../prompt/planning";
 import { BaseAgent, BaseAgentOptions } from "./base";
@@ -12,6 +14,7 @@ import {
   RequestError,
   ToolRetryError,
   RetryError,
+  CancelError,
 } from "../error/base";
 import { createExecuteContext } from "../context";
 import { retry } from "../utils/retry";
@@ -72,7 +75,7 @@ const CATCH_EMPTY = Symbol("CATCH_EMPTY");
 
 type PlanError = RequestError | ToolRetryError | RetryError | null;
 
-type CommandStatus = "pending" | "success" | "error" | null;
+type CommandStatus = "pending" | "success" | "aborted" | "error" | null;
 
 type EventsKV = {
   loading: boolean;
@@ -224,9 +227,16 @@ class PlanningAgent extends BaseAgent {
   private summaryMessage: string = "";
   /** 当前请求的cancel */
   private currentRequestCancel = () => {};
+  /** abort() 触发时 resolve，使 run() 立即结束 */
+  private abortResolve: (() => void) | null = null;
 
   get id() {
     return this.uuid;
+  }
+
+  /** 是否已中止 */
+  get isAborted() {
+    return this.status === "aborted";
   }
 
   /** 开始执行 */
@@ -234,7 +244,20 @@ class PlanningAgent extends BaseAgent {
     // 记录开始时间
     this.setStartTime(new Date().getTime());
 
-    await this.start();
+    // 防止 onPlan 回调中同步调用 abort() 后，run() 再将状态覆盖回 pending
+    if (this.isAborted) return;
+
+    const abortPromise = new Promise<void>((resolve) => {
+      this.abortResolve = () => {
+        this.options?.emits?.complete?.("");
+        resolve();
+      };
+    });
+
+    await Promise.race([this.start(), abortPromise]);
+
+    // 清理 abortResolve，防止内存泄漏
+    this.abortResolve = null;
   }
 
   private async start() {
@@ -259,7 +282,7 @@ class PlanningAgent extends BaseAgent {
             return await retry(
               () => this.planning(),
               Math.max(0, e.maxRetries - 1),
-              (x) => x instanceof RetryError,
+              (x) => !this.isAborted && x instanceof RetryError,
             );
           }
           throw e;
@@ -271,14 +294,44 @@ class PlanningAgent extends BaseAgent {
 
     await this.executeCommands();
 
-    // 执行结束，调用emits回调通知调用方
+    // 执行结束，调用emits回调通知调用方（aborted时不触发）
     if (this.status === "success") {
       this.options.emits.complete("");
     } else if (this.status === "error") {
       this.options.emits.error("");
     }
 
-    this.summary();
+    if (!this.isAborted) {
+      this.summary();
+    }
+  }
+
+  /** 终止执行 */
+  abort() {
+    if (this.status === "aborted") {
+      // 已经是取消状态
+      return;
+    }
+
+    this.setStatus("aborted");
+    // 调用当前请求的取消接口
+    this.currentRequestCancel?.();
+    this.setLoading(false);
+    this.setEndTime(new Date().getTime());
+    this.events.emit("summary", "已取消");
+    const commands = this.commands.map((command) => {
+      if (command.status === "pending") {
+        command.status = "aborted";
+      }
+      if (command.events) {
+        command.events.offAll();
+      }
+      return command;
+    });
+    this.setCommands(commands, true);
+    // 解除 run() 的等待
+    this.abortResolve?.();
+    this.events.offAll();
   }
 
   /** 设置需缓存的值 */
@@ -349,7 +402,7 @@ ${this.options.guidePrompt}
       this.events.emit("planningMessage", message);
     });
 
-    const planningResponse = await this.request({
+    const planningResponse: any = await this.request({
       messages: await this.getLLMMessages({
         start: [
           {
@@ -372,6 +425,11 @@ ${this.options.guidePrompt}
         },
       }),
     });
+
+    if (planningResponse instanceof CancelError) {
+      // 取消不是错误，静默退出
+      return;
+    }
 
     if (
       planningResponse instanceof RequestError ||
@@ -500,7 +558,7 @@ ${this.options.guidePrompt}
               // attempt 在 retry() 内部从 0 开始，但此处已是「第 1 次重试」，故 +1 对齐语义
               (attempt) => this.executeCommand(command, index, attempt + 1),
               Math.max(0, e.maxRetries - 1),
-              (x) => x instanceof ToolRetryError,
+              (x) => !this.isAborted && x instanceof ToolRetryError,
             );
           }
           // RequestError：网络重试已由 request.ts 内层 retry 消费，此处不再重试，直接抛出
@@ -513,35 +571,38 @@ ${this.options.guidePrompt}
 
       if (response === CATCH_EMPTY) {
         this.setLoading(false);
-        current.status = "error";
-        // 统一错误内容设置
-        if (
-          error instanceof ToolRetryError ||
-          error instanceof RequestError ||
-          error instanceof RetryError
-        ) {
-          Object.assign(current.content, {
-            llm:
-              error instanceof ToolRetryError
-                ? error.getLlmContentWithRetryMessage()
-                : error.llmContent,
-            display: error.displayContent,
-          });
-        } else if (error instanceof Error) {
-          const message = error.message;
-          Object.assign(current.content, {
-            llm: message,
-            display: message,
-          });
-        } else {
-          const message = "工具调用错误";
-          Object.assign(current.content, {
-            llm: message,
-            display: message,
-          });
+        // aborted 或取消时不设置 error
+        if (!this.isAborted && !(error instanceof CancelError)) {
+          current.status = "error";
+          // 统一错误内容设置
+          if (
+            error instanceof ToolRetryError ||
+            error instanceof RequestError ||
+            error instanceof RetryError
+          ) {
+            Object.assign(current.content, {
+              llm:
+                error instanceof ToolRetryError
+                  ? error.getLlmContentWithRetryMessage()
+                  : error.llmContent,
+              display: error.displayContent,
+            });
+          } else if (error instanceof Error) {
+            const message = error.message;
+            Object.assign(current.content, {
+              llm: message,
+              display: message,
+            });
+          } else {
+            const message = "工具调用错误";
+            Object.assign(current.content, {
+              llm: message,
+              display: message,
+            });
+          }
+          this.setCommands(this.commands, false);
+          this.setError(error);
         }
-        this.setCommands(this.commands, false);
-        this.setError(error);
       } else {
         const { needsContinue, ...contentData } =
           response as typeof response & {
@@ -574,7 +635,10 @@ ${this.options.guidePrompt}
    * @param insertAfterIndex 插入位置，新命令将插入到该索引之后
    * @returns 是否成功追加
    */
-  private handleAppendCommands(appendCommands: AppendCommand[] | undefined, insertAfterIndex: number): boolean {
+  private handleAppendCommands(
+    appendCommands: AppendCommand[] | undefined,
+    insertAfterIndex: number,
+  ): boolean {
     if (!appendCommands?.length) {
       return false;
     }
@@ -712,6 +776,9 @@ ${this.options.guidePrompt}
    * @param insertAfterIndex 新追加的步骤插入到该索引之后
    */
   private async continuePlanning(insertAfterIndex: number) {
+    if (this.isAborted) {
+      return;
+    }
     if (this.appendDepth >= this.maxAppendDepth) {
       console.warn(
         `[PlanningAgent] 续写深度已达上限 ${this.maxAppendDepth}，忽略本次续写`,
@@ -723,7 +790,7 @@ ${this.options.guidePrompt}
     this.events.emit("continue", { message: "计划下一步..." });
 
     try {
-      const response = await this.request({
+      const response: any = await this.request({
         messages: await this.getLLMMessages({
           start: [
             {
@@ -828,7 +895,7 @@ ${this.options.guidePrompt}
             if (streamError) {
               return;
             }
-            if (this.status === "error") {
+            if (this.isAborted || this.status === "error") {
               this.currentRequestCancel?.();
               streamError = this.error;
               return;
@@ -892,11 +959,14 @@ ${this.options.guidePrompt}
             });
           };
 
-      const startRes = stream?.("", "start");
+      const startRes: any = stream?.("", "start");
       if (startRes instanceof Promise) {
         const val = await startRes;
         if (typeof val === "string") {
-          command.events?.emit("streamMessage", { message: val, status: "start" });
+          command.events?.emit("streamMessage", {
+            message: val,
+            status: "start",
+          });
         }
       }
 
@@ -970,7 +1040,7 @@ ${this.options.guidePrompt}
         attachments: attachmentsInfo,
       });
 
-      const response = await this.request({
+      const response: any = await this.request({
         messages: llmMessages,
         emits: this.getEmits({
           write: (chunk) => {
@@ -1006,6 +1076,11 @@ ${this.options.guidePrompt}
 
       if (streamError) {
         throw streamError;
+      }
+
+      if (response instanceof CancelError) {
+        // 取消不是错误，静默退出
+        throw response;
       }
 
       if (
@@ -1307,12 +1382,13 @@ ${this.options.guidePrompt}
       enableLog: this.enableLog,
     });
     if (response.type === "error") {
-      this.setError(response.content);
+      if (!this.isAborted) {
+        this.setError(response.content);
+      }
       return response.content;
     } else if (response.type === "cancel") {
-      const error = new RequestError("已取消执行");
-      this.setError(error);
-      return error;
+      // 取消不是错误，返回 CancelError，由上层静默处理，不设置 error 状态
+      return new CancelError();
     }
     return response.content;
   }
@@ -1500,6 +1576,17 @@ ${this.options.guidePrompt}
                 "",
               )}` +
               `\nzsh：${command.content.llm || command.content.display}`
+            );
+          } else if (command.status === "aborted") {
+            return (
+              pre +
+              `\n- [] ${bash} ${name} ${Object.entries(params).reduce(
+                (pre, [key, value]) => {
+                  return pre + `-${key} ${value} `;
+                },
+                "",
+              )}` +
+              `\nzsh：${command.content.response ? command.content.response + "\n" : ""}执行中断`
             );
           }
           return pre;

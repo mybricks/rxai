@@ -61,6 +61,10 @@ interface RequestParams {
   maxAppendDepth?: number;
   /** 本次请求使用的历史记录模式，覆盖 Rxai 实例默认 */
   historyMessageMode?: HistoryMessageMode;
+  /**
+   * plan 实例创建后（run() 执行前）的回调，用于获取 当前请求对应的 PlanningAgent 实例
+   */
+  onPlan?: (plan: PlanningAgent) => void;
 }
 
 /**
@@ -259,6 +263,7 @@ class Rxai extends BaseAgent {
       insertAfter,
       maxAppendDepth,
       historyMessageMode,
+      onPlan,
     } = params;
 
     let startMessages = this.cacheMessages;
@@ -364,6 +369,8 @@ class Rxai extends BaseAgent {
     this.idb?.updateOrder(
       this.cacheMessages.map((planningAgent) => planningAgent.id),
     );
+
+    onPlan?.(planningAgent);
 
     await planningAgent.run();
 
