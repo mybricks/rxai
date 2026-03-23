@@ -805,6 +805,11 @@ ${this.options.guidePrompt}
         emits: this.getEmits(),
       });
 
+      if (response instanceof CancelError) {
+        // 取消不是错误，静默退出
+        return;
+      }
+
       if (
         response instanceof RequestError ||
         response instanceof ToolRetryError ||
