@@ -30,6 +30,23 @@ interface MessagesDBSchema extends DBSchema {
       ["planId-type"]: [string, string];
     };
   };
+  version: {
+    key: number;
+    value: VersionRecord;
+    indexes: {
+      sessionKey: number;
+      "sessionKey-uuid": [number, string];
+    };
+  };
+}
+
+export interface VersionRecord {
+  /** 绑定 idb.key，隔离不同实例 */
+  sessionKey: number;
+  /** 调用方传入的版本唯一标识 */
+  uuid: string;
+  /** 调用方传入的任意版本数据，不限结构 */
+  data: Record<string, unknown>;
 }
 
 export interface CompactionRecord {
@@ -64,7 +81,7 @@ class IDB {
   }
 
   private async init(dbName: string) {
-    return openDB<MessagesDBSchema>(dbName, 1, {
+    return openDB<MessagesDBSchema>(dbName, 3, {
       upgrade(db) {
         if (!db.objectStoreNames.contains("plan")) {
           const planStore = db.createObjectStore("plan", {
@@ -81,6 +98,23 @@ class IDB {
             unique: false,
           });
           contentStore.createIndex("planId-type", ["planId", "type"], {
+            unique: true,
+          });
+        }
+
+        if (db.objectStoreNames.contains("version")) {
+          // v2 → v3: drop old store with createdAt index, recreate with uuid index
+          db.deleteObjectStore("version");
+        }
+
+        {
+          const versionStore = db.createObjectStore("version", {
+            autoIncrement: true,
+          });
+          versionStore.createIndex("sessionKey", "sessionKey", {
+            unique: false,
+          });
+          versionStore.createIndex("sessionKey-uuid", ["sessionKey", "uuid"], {
             unique: true,
           });
         }
@@ -279,6 +313,120 @@ class IDB {
       await tx.done;
     } catch (e) {
       console.error(e);
+    }
+  }
+
+  /**
+   * 写入一条版本记录，uuid 由调用方传入。
+   */
+  async addVersion(uuid: string, data: Record<string, unknown>): Promise<void> {
+    try {
+      const db = await this.dbPromise;
+      const tx = db.transaction("version", "readwrite");
+      const store = tx.objectStore("version");
+
+      await store.add({
+        sessionKey: this.key,
+        uuid,
+        data,
+      });
+
+      await tx.done;
+    } catch (e) {
+      console.error(e, data);
+    }
+  }
+
+  /**
+   * 读取当前实例的所有版本记录。
+   */
+  async getVersions(): Promise<VersionRecord[]> {
+    try {
+      const db = await this.dbPromise;
+      const tx = db.transaction("version", "readonly");
+      const store = tx.objectStore("version");
+      return store.index("sessionKey").getAll(this.key);
+    } catch (e) {
+      console.error(e);
+      return [];
+    }
+  }
+
+  /**
+   * 保留指定数量的版本记录，删除多余的旧记录（按主键顺序）。
+   */
+  async trimVersions(keepCount: number): Promise<void> {
+    try {
+      const db = await this.dbPromise;
+      const tx = db.transaction("version", "readwrite");
+      const store = tx.objectStore("version");
+
+      const allKeys = await store.index("sessionKey").getAllKeys(this.key);
+
+      const deleteCount = allKeys.length - keepCount;
+      if (deleteCount > 0) {
+        for (let i = 0; i < deleteCount; i++) {
+          await store.delete(allKeys[i] as number);
+        }
+      }
+
+      await tx.done;
+    } catch (e) {
+      console.error(e, keepCount);
+    }
+  }
+
+  /**
+   * 更新指定版本记录的 data 字段，通过 uuid 定位记录。
+   */
+  async updateVersion(
+    uuid: string,
+    data: Record<string, unknown>,
+  ): Promise<void> {
+    try {
+      const db = await this.dbPromise;
+      const tx = db.transaction("version", "readwrite");
+      const store = tx.objectStore("version");
+
+      const primaryKey = await store
+        .index("sessionKey-uuid")
+        .getKey([this.key, uuid]);
+
+      if (primaryKey !== undefined) {
+        await store.put({ sessionKey: this.key, uuid, data }, primaryKey);
+      }
+
+      await tx.done;
+    } catch (e) {
+      console.error(e, uuid);
+    }
+  }
+
+  /**
+   * 删除指定 uuid 及其之后的所有版本记录（按主键顺序）。
+   */
+  async deleteVersion(uuid: string): Promise<void> {
+    try {
+      const db = await this.dbPromise;
+      const tx = db.transaction("version", "readwrite");
+      const store = tx.objectStore("version");
+
+      const targetKey = await store
+        .index("sessionKey-uuid")
+        .getKey([this.key, uuid]);
+
+      if (targetKey !== undefined) {
+        const allKeys = await store.index("sessionKey").getAllKeys(this.key);
+        for (const key of allKeys) {
+          if ((key as number) >= (targetKey as number)) {
+            await store.delete(key as number);
+          }
+        }
+      }
+
+      await tx.done;
+    } catch (e) {
+      console.error(e, uuid);
     }
   }
 
