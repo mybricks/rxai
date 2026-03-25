@@ -31,11 +31,6 @@ type ToolExecuteResult =
       /** 追加的工具调用列表，会在当前工具执行完后按顺序追加到执行队列末尾 */
       appendCommands?: AppendCommand[];
       /**
-       * 触发 LLM 续写规划：execute 返回后，
-       * 由 LLM 基于当前执行上下文自主决定追加哪些工具。
-       */
-      needsContinue?: boolean;
-      /**
        * 历史记录文件名列表（仅 get-history-records 工具使用）。
        * agent 内部会读取此字段来设置 filenames。
        */

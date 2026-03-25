@@ -100,35 +100,57 @@ type EventsKV = {
  * 分析计划
  * 执行计划
  */
+/** 单次重试记录（autoRetry 或手动 retry 时追加） */
+type CommandRetry = {
+  /** 第几次重试，从 1 开始 */
+  attempt: number;
+  startTime: number;
+  endTime: number;
+  content: {
+    llm: string;
+    display: string;
+    response: string;
+  };
+};
+
+/** command 列表中的节点类型：普通工具调用 或 续写规划占位 */
+type CommandType = "tool" | "continue";
+
+type Command = {
+  /** 节点类型，默认 'tool'；'continue' 为续写规划占位节点，不参与 LLM 消息构建 */
+  type?: CommandType;
+  startTime: number;
+  endTime: number;
+  argv: [
+    string,
+    string,
+    {
+      [key: string]: string;
+    },
+  ];
+  status: CommandStatus;
+  tool: {
+    name: string;
+    displayName: string;
+  };
+  content: {
+    llm: string;
+    display: string;
+    response: string;
+  };
+  /** 历次重试记录（autoRetry 自动重试 + 手动 retry 均追加），重试成功后保留 */
+  retries?: CommandRetry[];
+  events?: Events<{
+    streamMessage: { message: string; status: string };
+  }>;
+};
+
 class PlanningAgent extends BaseAgent {
   startTime: number = 0;
   private endTime: number = 0;
   private llmContent: string = "";
   private loading: boolean = false;
-  private commands: {
-    startTime: number;
-    endTime: number;
-    argv: [
-      string,
-      string,
-      {
-        [key: string]: string;
-      },
-    ];
-    status: CommandStatus;
-    tool: {
-      name: string;
-      displayName: string;
-    };
-    content: {
-      llm: string;
-      display: string;
-      response: string;
-    };
-    events?: Events<{
-      streamMessage: { message: string; status: string };
-    }>;
-  }[] = [];
+  private commands: Command[] = [];
   private filenames: string[] = [];
 
   /** 格式化后的用户输入文本（仅用户原文经 formatUserMessage 后的结果，不含规划/进度），历史构建时优先使用 */
@@ -535,6 +557,16 @@ ${this.options.guidePrompt}
     while (index < this.commands.length && this.status === "pending") {
       const command = this.commands[index];
 
+      // continue 节点由 continuePlanning 自行管理，执行循环只负责跳过它
+      if (command.type === "continue") {
+        index++;
+        // 跳过后若已到末尾（continuePlanning 没有追加新工具），正常结束
+        if (index === this.commands.length && this.status === "pending") {
+          this.setStatus("success");
+        }
+        continue;
+      }
+
       command.status = "pending";
       command.startTime = new Date().getTime();
 
@@ -546,17 +578,62 @@ ${this.options.guidePrompt}
         } catch (e) {
           // 统一处理：根据错误类型决定重试策略
           if (e instanceof ToolRetryError && e.autoRetry && e.maxRetries > 0) {
-            // 先把当前错误信息写入步骤 content，与手动重试时一致，再自动重试
             const currentForRetry = this.commands[index];
-            Object.assign(currentForRetry.content, {
-              llm: e.getLlmContentWithRetryMessage(),
-              display: e.displayContent,
+            const retryAttempt = (currentForRetry.retries?.length ?? 0) + 1;
+            // 把本次失败记录压入 retries[]，保留历次重试历史
+            currentForRetry.retries = currentForRetry.retries ?? [];
+            currentForRetry.retries.push({
+              attempt: retryAttempt,
+              startTime: currentForRetry.startTime,
+              endTime: new Date().getTime(),
+              content: {
+                llm: e.getLlmContentWithRetryMessage(),
+                display: e.displayContent,
+                response: currentForRetry.content.response,
+              },
             });
-            this.setCommands(this.commands, false);
+            // 重置 content 准备下一次尝试（先清空再写，保持字段完整）
+            Object.assign(currentForRetry.content, {
+              llm: "",
+              display: "",
+              response: "",
+            });
+            this.setCommands(this.commands, true);
             // 进入 catch 时已执行过 1 次，retry() 内部会再执行 (count+1) 次，故传 maxRetries-1 才能保证「1 次初始 + maxRetries 次重试」
             return await retry(
               // attempt 在 retry() 内部从 0 开始，但此处已是「第 1 次重试」，故 +1 对齐语义
-              (attempt) => this.executeCommand(command, index, attempt + 1),
+              async (attempt) => {
+                // 每次 retry 回调开始前，更新 command 开始时间（新一轮尝试）
+                currentForRetry.startTime = new Date().getTime();
+                try {
+                  return await this.executeCommand(command, index, attempt + 1);
+                } catch (retryErr) {
+                  if (retryErr instanceof ToolRetryError) {
+                    // 中间某次重试失败，也压入 retries[]
+                    const nextAttempt =
+                      (currentForRetry.retries?.length ?? 0) + 1;
+                    currentForRetry.retries = currentForRetry.retries ?? [];
+                    currentForRetry.retries.push({
+                      attempt: nextAttempt,
+                      startTime: currentForRetry.startTime,
+                      endTime: new Date().getTime(),
+                      content: {
+                        llm: retryErr.getLlmContentWithRetryMessage(),
+                        display: retryErr.displayContent,
+                        response: currentForRetry.content.response,
+                      },
+                    });
+                    // 清空 content 为下一次尝试准备
+                    Object.assign(currentForRetry.content, {
+                      llm: "",
+                      display: "",
+                      response: "",
+                    });
+                    this.setCommands(this.commands, true);
+                  }
+                  throw retryErr;
+                }
+              },
               Math.max(0, e.maxRetries - 1),
               (x) => !this.isAborted && x instanceof ToolRetryError,
             );
@@ -574,6 +651,7 @@ ${this.options.guidePrompt}
         // aborted 或取消时不设置 error
         if (!this.isAborted && !(error instanceof CancelError)) {
           current.status = "error";
+          current.endTime = new Date().getTime();
           // 统一错误内容设置
           if (
             error instanceof ToolRetryError ||
@@ -604,26 +682,27 @@ ${this.options.guidePrompt}
           this.setError(error);
         }
       } else {
-        const { needsContinue, ...contentData } =
-          response as typeof response & {
-            needsContinue?: boolean;
-          };
         current.status = "success";
-        Object.assign(current.content, contentData);
+        current.endTime = new Date().getTime();
+        Object.assign(current.content, response);
         this.setCommands(this.commands, true);
-
-        // content 已写回 command，此时触发续写规划，LLM 能看到本步输出
-        if (needsContinue) {
-          await this.continuePlanning(index);
-        }
       }
-
-      current.endTime = new Date().getTime();
 
       if (this.status === "pending") {
         index++;
         if (index === this.commands.length) {
-          this.setStatus("success");
+          // 最后一个执行的节点是真实工具（非 continue 占位）时，自动触发一次 continuePlanning
+          // 若 continuePlanning 追加了新工具，index < this.commands.length 成立，循环继续
+          // 若无追加（或深度已达上限），再次检查 index === length，才退出
+          if (
+            this.commands[index - 1]?.type !== "continue" &&
+            !this.isAborted
+          ) {
+            await this.continuePlanning(index - 1);
+          }
+          if (index === this.commands.length) {
+            this.setStatus("success");
+          }
         }
       }
     }
@@ -690,7 +769,7 @@ ${this.options.guidePrompt}
   }
 
   /**
-   * 执行工具并规范化返回值（含 appendCommands / needsContinue）
+   * 执行工具并规范化返回值（含 appendCommands）
    */
   private async toolExecute(
     tool: Tool,
@@ -706,7 +785,6 @@ ${this.options.guidePrompt}
     llm: string;
     display: string;
     appendCommands?: AppendCommand[];
-    needsContinue?: boolean;
   }> {
     const context = createExecuteContext({
       currentIndex: commandIndex,
@@ -731,7 +809,6 @@ ${this.options.guidePrompt}
         return {
           llmContent: tip,
           displayContent: tip,
-          needsContinue: raw?.needsContinue,
         };
       }
       return (tool.execute as (p: any, c?: ExecuteContext) => any)(
@@ -748,7 +825,6 @@ ${this.options.guidePrompt}
       llm: string;
       display: string;
       appendCommands?: AppendCommand[];
-      needsContinue?: boolean;
     };
 
     if (typeof response === "string") {
@@ -758,13 +834,11 @@ ${this.options.guidePrompt}
         llmContent: string;
         displayContent: string;
         appendCommands?: AppendCommand[];
-        needsContinue?: boolean;
       };
       result = {
         llm: obj.llmContent,
         display: obj.displayContent,
         appendCommands: obj.appendCommands,
-        needsContinue: obj.needsContinue,
       };
     }
 
@@ -787,7 +861,29 @@ ${this.options.guidePrompt}
     }
     // appendDepth 由 handleAppendCommands 统一管理，此处不重复计数
 
-    this.events.emit("continue", { message: "计划下一步..." });
+    this.events.emit("continue", { message: "思考中..." });
+
+    // 在 commands 中插入 type='continue' 占位节点（用于展示/存储；不参与 getLLMMessages 的工具进度构建，但会通过 getMessages 拼入历史摘要）
+    const continueNode: Command = {
+      type: "continue",
+      startTime: new Date().getTime(),
+      endTime: 0,
+      argv: ["node", "continue", {}],
+      status: "pending",
+      tool: { name: "continue", displayName: "计划下一步" },
+      content: { llm: "", display: "思考中...", response: "" },
+    };
+    // 插入到 insertAfterIndex 之后
+    this.commands.splice(insertAfterIndex + 1, 0, continueNode);
+    // 记录在 commands 中的实际位置
+    const continueNodeIndex = insertAfterIndex + 1;
+    this.setCommands(this.commands, true);
+
+    // 流式更新 continue 节点的 display（复用 getPlanningStream 过滤掉 bash 块部分）
+    const continueStream = getPlanningStream((message) => {
+      this.commands[continueNodeIndex].content.display = message;
+      this.setCommands(this.commands, false);
+    });
 
     try {
       const response: any = await this.request({
@@ -802,11 +898,18 @@ ${this.options.guidePrompt}
             ...this.getHistoryMessages(),
           ],
         }),
-        emits: this.getEmits(),
+        emits: this.getEmits({
+          write: (chunk) => {
+            continueStream(chunk);
+          },
+        }),
       });
 
       if (response instanceof CancelError) {
         // 取消不是错误，静默退出
+        this.commands[continueNodeIndex].status = "aborted";
+        this.commands[continueNodeIndex].endTime = new Date().getTime();
+        this.setCommands(this.commands, true);
         return;
       }
 
@@ -815,21 +918,52 @@ ${this.options.guidePrompt}
         response instanceof ToolRetryError ||
         response instanceof RetryError
       ) {
+        this.commands[continueNodeIndex].status = "error";
+        this.commands[continueNodeIndex].endTime = new Date().getTime();
+        this.commands[continueNodeIndex].content.llm = response.message ?? "";
+        this.commands[continueNodeIndex].content.display =
+          response.displayContent ?? response.message ?? "";
+        this.setCommands(this.commands, true);
         return;
       }
 
       if (typeof response !== "string" || response.trim() === "DONE") {
+        // LLM 判断无需续写，continue 节点标记成功（表示流程走完，只是没有追加）
+        this.commands[continueNodeIndex].status = "success";
+        this.commands[continueNodeIndex].endTime = new Date().getTime();
+        this.commands[continueNodeIndex].tool.displayName = "结束";
+        const llm0 = typeof response === "string" ? response : "";
+        this.commands[continueNodeIndex].content.llm = llm0;
+        this.commands[continueNodeIndex].content.display =
+          extractPlanningDisplay(llm0);
+        this.setCommands(this.commands, true);
         return;
       }
 
       const newCommands = parseBashCommands(response);
       if (!newCommands.length) {
+        this.commands[continueNodeIndex].status = "success";
+        this.commands[continueNodeIndex].endTime = new Date().getTime();
+        this.commands[continueNodeIndex].tool.displayName = "结束";
+        this.commands[continueNodeIndex].content.llm = response;
+        this.commands[continueNodeIndex].content.display =
+          extractPlanningDisplay(response);
+        this.setCommands(this.commands, true);
         return;
       }
 
+      // 续写成功，continue 节点标记 success，记录 llm 响应，新 command 插入到 continue 节点之后
+      this.commands[continueNodeIndex].status = "success";
+      this.commands[continueNodeIndex].endTime = new Date().getTime();
+      this.commands[continueNodeIndex].tool.displayName = "规划下一步";
+      this.commands[continueNodeIndex].content.llm = response;
+      this.commands[continueNodeIndex].content.display =
+        extractPlanningDisplay(response);
+      this.setCommands(this.commands, true);
+
       this.handleAppendCommands(
         newCommands.map(([, toolName, params]) => ({ toolName, params })),
-        insertAfterIndex,
+        continueNodeIndex,
       );
     } finally {
       this.events.emit("continueEnd", undefined);
@@ -882,10 +1016,9 @@ ${this.options.guidePrompt}
         },
         commandIndex,
       );
-      const { appendCommands, needsContinue, ...contentData } = result;
+      const { appendCommands, ...contentData } = result;
       Object.assign(content, contentData);
       this.handleAppendCommands(appendCommands, commandIndex);
-      if (needsContinue) Object.assign(content, { needsContinue: true });
     } else {
       let streamMessage = "";
       let streamError: any = null;
@@ -1110,10 +1243,9 @@ ${this.options.guidePrompt}
         },
         commandIndex,
       );
-      const { appendCommands, needsContinue, ...contentData } = result;
+      const { appendCommands, ...contentData } = result;
       Object.assign(content, contentData, { response });
       this.handleAppendCommands(appendCommands, commandIndex);
-      if (needsContinue) Object.assign(content, { needsContinue: true });
     }
 
     return content;
@@ -1266,18 +1398,21 @@ ${this.options.guidePrompt}
         "\n\n[注意] 历史消息中可能包含 <历史记录-摘要> 格式的摘要内容，这个内容已经不是原始输出，禁止模仿此格式输出。",
     );
 
-    // 如果存在命令，则构建“工具规划”和“执行进度”
+    // 如果存在命令，则构建"工具规划"和"执行进度"
     if (this.commands.length > 0) {
+      // 过滤掉 type='continue' 的占位节点，不列入工具规划列表
+      const llmCommands = this.commands.filter((c) => c.type !== "continue");
+
       // 预先找到当前正在执行的命令
-      const currentCommand = this.commands.find((c) => c.status === "pending");
+      const currentCommand = llmCommands.find((c) => c.status === "pending");
       const currentCommandString = currentCommand
         ? buildCommandString(currentCommand.argv)
         : "无";
 
-      // --- 构建“工具规划”部分 ---
+      // --- 构建"工具规划"部分（只列普通工具节点）---
       let planningContent = `\n\n---\n## 工具规划`;
       planningContent += `\n为了帮助用户达成上述目的，系统规划了以下工具来处理，当前正在执行 ${currentCommandString}。`;
-      for (const command of this.commands) {
+      for (const command of llmCommands) {
         if (command.status === null) continue;
         const statusMap: Record<string, string> = {
           success: "[已完成]",
@@ -1288,10 +1423,18 @@ ${this.options.guidePrompt}
         planningContent += `\n${status} ${buildCommandString(command.argv)}`;
       }
 
-      // --- 构建“执行进度”部分 ---
+      // --- 构建"执行进度"部分（包含 continue 节点的 llm 输出）---
       let progressContent = `\n\n## 执行进度`;
       for (const command of this.commands) {
         if (command.status === null) continue;
+        // continue 节点：单独段落展示 llm 响应，不作为工具执行记录
+        if (command.type === "continue") {
+          const llm = command.content.llm;
+          if (llm && command.status === "success") {
+            progressContent += `\n\n[续写规划]\n----- 输出内容 -----\n${llm}\n----- 输出内容 -----`;
+          }
+          continue;
+        }
         const commandStr = buildCommandString(command.argv);
         switch (command.status) {
           case "success": {
@@ -1302,13 +1445,12 @@ ${this.options.guidePrompt}
           }
           case "pending": {
             progressContent += `\n\n[正在执行] ${commandStr}`;
-            const pendingOutput =
-              command.content.llm || command.content.display;
-            if (pendingOutput) {
-              progressContent += `\n----- 输出内容 -----\n${pendingOutput}\n----- 输出内容 -----`;
-              progressContent += `\n执行时出错，请分析错误原因，修正上述命令或重新规划。`;
-            } else if (this.error instanceof ToolRetryError) {
-              progressContent += `\n执行时出错: ${this.error.message}\n请分析错误原因，修正上述命令或重新规划。`;
+            const retries = command.retries;
+            const lastRetry = retries?.[retries.length - 1];
+            if (lastRetry?.content.llm) {
+              progressContent += `\n上一次执行失败，错误信息如下：`;
+              progressContent += `\n----- 错误信息 -----\n${lastRetry.content.llm}\n----- 错误信息 -----`;
+              progressContent += `\n请根据上述错误信息重新生成当前步骤的输出。`;
             } else {
               progressContent +=
                 "\n请根据工具描述、用户消息、以及前置工具的执行结果，为当前步骤提供输出。";
@@ -1549,6 +1691,14 @@ ${this.options.guidePrompt}
       message +=
         "\n\n### 工具调用记录" +
         `${this.commands.reduce((pre, command, index) => {
+          // type='continue' 节点：把完整 llm 响应（含 bash 脚本）拼入摘要，供下一轮 LLM 感知续写决策
+          if (command.type === "continue") {
+            const llm = command.content.llm;
+            if (llm && command.status === "success") {
+              return pre + `\n\n[续写规划] ${llm}`;
+            }
+            return pre;
+          }
           if (!command.status) {
             return pre;
           }
@@ -1674,6 +1824,29 @@ ${this.options.guidePrompt}
       }
 
       // this.setError(null);
+    } else {
+      // ToolRetryError / RequestError：找到出错的 command，把当前错误内容压入 retries[]
+      const erroredCommand = this.commands.find((c) => c.status === "error");
+      if (
+        erroredCommand &&
+        (erroredCommand.content.llm || erroredCommand.content.display)
+      ) {
+        erroredCommand.retries = erroredCommand.retries ?? [];
+        erroredCommand.retries.push({
+          attempt: erroredCommand.retries.length + 1,
+          startTime: erroredCommand.startTime,
+          endTime: erroredCommand.endTime,
+          content: { ...erroredCommand.content },
+        });
+        // 重置 command 状态准备重跑
+        erroredCommand.status = null;
+        Object.assign(erroredCommand.content, {
+          llm: "",
+          display: "",
+          response: "",
+        });
+        this.setCommands(this.commands, true);
+      }
     }
 
     await this.start();
@@ -1694,7 +1867,7 @@ ${this.options.guidePrompt}
         presetHistoryMessages: options.presetHistoryMessages,
         presetMessages: presetMsgs,
       },
-      commands: this.commands,
+      commands: this.commands.map(({ events, ...rest }) => rest),
       defaultPlanList: this.defaultPlanList,
       enableLog: this.enableLog,
       enableRetry: this.enableRetry,
@@ -1809,6 +1982,16 @@ ${message}
 }
 
 export { PlanningAgent };
+
+/**
+ * 从 LLM 规划响应中提取用于展示的文本（bash 脚本之前的说明部分）
+ */
+function extractPlanningDisplay(response: string): string {
+  const bashIndex = response.indexOf("```bash");
+  return bashIndex !== -1
+    ? response.slice(0, bashIndex).trim()
+    : response.trim();
+}
 
 function parseBashCommands(string: string) {
   const bashCodeRegex = /```\s*bash([\s\S]*?)```/;

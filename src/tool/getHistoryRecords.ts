@@ -70,13 +70,10 @@ const getHistoryRecords = (): Tool => {
     execute({ params }, context) {
       const { filenames } = params as { filenames: string };
       const fileNames = filenames.split(",");
-      const isLast = context.currentIndex === context.commands.length - 1;
-
       return {
         llmContent: filenames,
         displayContent: "已读取历史对话记录",
         fileNames,
-        needsContinue: isLast,
       };
 
       // console.log("[planningAgents]", planningAgents);
