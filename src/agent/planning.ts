@@ -61,6 +61,8 @@ interface PlanningAgentOptions extends BaseAgentOptions {
     | null;
   /** 追加命令的最大深度，防止循环追加；不传则使用默认值 */
   maxAppendDepth?: number;
+  /** 续写规划的最大次数；超限后发一次强制总结消息，然后不再续写；不传则使用默认值 */
+  maxContinueDepth?: number;
   /**
    * 每次工具调用前 getLLMMessages 组装完成后回调，携带本次请求的完整消息列表。
    * 调用方可据此估算上下文 token 用量，用于 compaction 触发判断。
@@ -164,10 +166,20 @@ class PlanningAgent extends BaseAgent {
   /** 当前追加深度 */
   private appendDepth: number = 0;
 
+  /** 续写规划的最大次数（默认 4），超限后发一次强制总结消息 */
+  private static readonly DEFAULT_MAX_CONTINUE_DEPTH = 4;
+  private readonly maxContinueDepth: number;
+  /** 当前续写次数 */
+  private continueDepth: number = 0;
+  /** 续写已耗尽：最后一次强制总结请求已发出，不再接受任何续写 */
+  private continueExhausted: boolean = false;
+
   constructor(private options: PlanningAgentOptions) {
     super(options);
     this.maxAppendDepth =
       options.maxAppendDepth ?? PlanningAgent.DEFAULT_MAX_APPEND_DEPTH;
+    this.maxContinueDepth =
+      options.maxContinueDepth ?? PlanningAgent.DEFAULT_MAX_CONTINUE_DEPTH;
     // 设置UUID
     this.uuid = options.uuid || uuid();
     if (options.planList) {
@@ -853,6 +865,10 @@ ${this.options.guidePrompt}
     if (this.isAborted) {
       return;
     }
+    // 续写已耗尽（最后一次超限总结已发出），静默跳过
+    if (this.continueExhausted) {
+      return;
+    }
     if (this.appendDepth >= this.maxAppendDepth) {
       console.warn(
         `[PlanningAgent] 续写深度已达上限 ${this.maxAppendDepth}，忽略本次续写`,
@@ -860,6 +876,11 @@ ${this.options.guidePrompt}
       return;
     }
     // appendDepth 由 handleAppendCommands 统一管理，此处不重复计数
+
+    // 检查是否达到续写次数上限：若已达上限，本次为最后一次（强制总结），完成后标记 continueExhausted
+    const isLastContinue = this.continueDepth >= this.maxContinueDepth;
+
+    this.continueDepth++;
 
     this.events.emit("continue", { message: "思考中..." });
 
@@ -886,6 +907,15 @@ ${this.options.guidePrompt}
     });
 
     try {
+      const continueExhaustedMessage: ChatMessages = isLastContinue
+        ? [
+            {
+              role: "user",
+              content: `[系统提示] 当前自动续写次数已达上限（${this.maxContinueDepth} 次），不得再追加任何新的工具调用。请立即输出一段总结：说明哪些任务已完成、哪些未能完成及原因，并建议用户通过手动操作或其他途径继续解决剩余问题。`,
+            },
+          ]
+        : [];
+
       const response: any = await this.request({
         messages: await this.getLLMMessages({
           start: [
@@ -897,6 +927,8 @@ ${this.options.guidePrompt}
             },
             ...this.getHistoryMessages(),
           ],
+          end: continueExhaustedMessage,
+          isContinue: true,
         }),
         emits: this.getEmits({
           write: (chunk) => {
@@ -911,6 +943,11 @@ ${this.options.guidePrompt}
         this.commands[continueNodeIndex].endTime = new Date().getTime();
         this.setCommands(this.commands, true);
         return;
+      }
+
+      // 超限总结请求完成，标记 continueExhausted，后续所有续写均静默跳过
+      if (isLastContinue) {
+        this.continueExhausted = true;
       }
 
       if (
@@ -1348,9 +1385,11 @@ ${this.options.guidePrompt}
   private async getLLMMessages(params: {
     start?: ChatMessages;
     end?: ChatMessages;
+    /** 是否为续写规划上下文；为 true 时在用户消息头部注入历史需求声明，防止 LLM 误判问题尚未解决 */
+    isContinue?: boolean;
   }) {
     const { options } = this;
-    const { start, end } = params;
+    const { start, end, isContinue } = params;
     // 辅助函数，用于从 argv 构建命令字符串
     const buildCommandString = (
       argv: [string, string, Record<string, any>],
@@ -1397,6 +1436,15 @@ ${this.options.guidePrompt}
         msg +
         "\n\n[注意] 历史消息中可能包含 <历史记录-摘要> 格式的摘要内容，这个内容已经不是原始输出，禁止模仿此格式输出。",
     );
+
+    // 续写规划场景：在用户消息头部注入声明，避免 LLM 因看到原始问题陈述而误判问题尚未处理
+    if (isContinue) {
+      userMessage = this.formatUserMessage(
+        userMessage,
+        (msg) =>
+          `[历史需求，当前工具链已在执行中，请以下方"执行进度"的实际情况作为是否结束的判断依据，不要因为原始需求的存在而误判问题尚未解决]\n${msg}`,
+      );
+    }
 
     // 如果存在命令，则构建"工具规划"和"执行进度"
     if (this.commands.length > 0) {
