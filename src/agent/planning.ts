@@ -869,13 +869,6 @@ ${this.options.guidePrompt}
     if (this.continueExhausted) {
       return;
     }
-    if (this.appendDepth >= this.maxAppendDepth) {
-      console.warn(
-        `[PlanningAgent] 续写深度已达上限 ${this.maxAppendDepth}，忽略本次续写`,
-      );
-      return;
-    }
-    // appendDepth 由 handleAppendCommands 统一管理，此处不重复计数
 
     // 检查是否达到续写次数上限：若已达上限，本次为最后一次（强制总结），完成后标记 continueExhausted
     const isLastContinue = this.continueDepth >= this.maxContinueDepth;
@@ -907,14 +900,14 @@ ${this.options.guidePrompt}
     });
 
     try {
-      const continueExhaustedMessage: ChatMessages = isLastContinue
-        ? [
-            {
-              role: "user",
-              content: `[系统提示] 当前自动续写次数已达上限（${this.maxContinueDepth} 次），不得再追加任何新的工具调用。请立即输出一段总结：说明哪些任务已完成、哪些未能完成及原因，并建议用户通过手动操作或其他途径继续解决剩余问题。`,
-            },
-          ]
-        : [];
+      const decisionMessage: ChatMessages = [
+        {
+          role: "user",
+          content: isLastContinue
+            ? `[决策提示] 当前自动续写次数已达上限（${this.maxContinueDepth} 次），不得再追加任何新的工具调用。请立即输出一段总结：说明哪些任务已完成、哪些未能完成及原因，并建议用户通过手动操作或其他途径继续解决剩余问题。`
+            : `[决策提示] 根据以上进度，对本次情况做一下决策`,
+        },
+      ];
 
       const response: any = await this.request({
         messages: await this.getLLMMessages({
@@ -927,7 +920,7 @@ ${this.options.guidePrompt}
             },
             ...this.getHistoryMessages(),
           ],
-          end: continueExhaustedMessage,
+          end: decisionMessage,
           isContinue: true,
         }),
         emits: this.getEmits({
@@ -960,6 +953,19 @@ ${this.options.guidePrompt}
         this.commands[continueNodeIndex].content.llm = response.message ?? "";
         this.commands[continueNodeIndex].content.display =
           response.displayContent ?? response.message ?? "";
+        this.setCommands(this.commands, true);
+        return;
+      }
+
+      // 超限的最后一次：无论 LLM 返回什么，都作为纯文本总结处理，不追加任何命令
+      if (isLastContinue) {
+        this.commands[continueNodeIndex].status = "success";
+        this.commands[continueNodeIndex].endTime = new Date().getTime();
+        this.commands[continueNodeIndex].tool.displayName = "结束";
+        const llmLast = typeof response === "string" ? response : "";
+        this.commands[continueNodeIndex].content.llm = llmLast;
+        this.commands[continueNodeIndex].content.display =
+          extractPlanningDisplay(llmLast);
         this.setCommands(this.commands, true);
         return;
       }
@@ -1385,7 +1391,7 @@ ${this.options.guidePrompt}
   private async getLLMMessages(params: {
     start?: ChatMessages;
     end?: ChatMessages;
-    /** 是否为续写规划上下文；为 true 时在用户消息头部注入历史需求声明，防止 LLM 误判问题尚未解决 */
+    /** 是否为续写规划上下文；为 true 时将进度信息拆分为独立 user 消息，不再注入到原始需求消息 */
     isContinue?: boolean;
   }) {
     const { options } = this;
@@ -1437,14 +1443,8 @@ ${this.options.guidePrompt}
         "\n\n[注意] 历史消息中可能包含 <历史记录-摘要> 格式的摘要内容，这个内容已经不是原始输出，禁止模仿此格式输出。",
     );
 
-    // 续写规划场景：在用户消息头部注入声明，避免 LLM 因看到原始问题陈述而误判问题尚未处理
-    if (isContinue) {
-      userMessage = this.formatUserMessage(
-        userMessage,
-        (msg) =>
-          `[历史需求，当前工具链已在执行中，请以下方"执行进度"的实际情况作为是否结束的判断依据，不要因为原始需求的存在而误判问题尚未解决]\n${msg}`,
-      );
-    }
+    // 独立的进度 user 消息（仅在 isContinue 场景使用）
+    let progressMessage: { role: string; content: string } | null = null;
 
     // 如果存在命令，则构建"工具规划"和"执行进度"
     if (this.commands.length > 0) {
@@ -1458,7 +1458,7 @@ ${this.options.guidePrompt}
         : "无";
 
       // --- 构建"工具规划"部分（只列普通工具节点）---
-      let planningContent = `\n\n---\n## 工具规划`;
+      let planningContent = `---\n## 工具规划`;
       planningContent += `\n为了帮助用户达成上述目的，系统规划了以下工具来处理，当前正在执行 ${currentCommandString}。`;
       for (const command of llmCommands) {
         if (command.status === null) continue;
@@ -1472,7 +1472,7 @@ ${this.options.guidePrompt}
       }
 
       // --- 构建"执行进度"部分（包含 continue 节点的 llm 输出）---
-      let progressContent = `\n\n## 执行进度`;
+      let progressContent = `## 执行进度`;
       for (const command of this.commands) {
         if (command.status === null) continue;
         // continue 节点：单独段落展示 llm 响应，不作为工具执行记录
@@ -1516,11 +1516,20 @@ ${this.options.guidePrompt}
             break;
         }
       }
-      // 组合所有内容
-      userMessage = this.formatUserMessage(
-        userMessage,
-        (msg) => msg + planningContent + progressContent,
-      );
+
+      if (isContinue) {
+        // 续写场景：进度作为独立 user 消息，不注入到原始需求消息
+        progressMessage = {
+          role: "user",
+          content: planningContent + "\n\n" + progressContent,
+        };
+      } else {
+        // 非续写场景：保持原有行为，合并到 userMessage
+        userMessage = this.formatUserMessage(
+          userMessage,
+          (msg) => msg + "\n\n" + planningContent + "\n\n" + progressContent,
+        );
+      }
     }
 
     // 附加重试错误信息，供重试轮把错误原因带给 LLM
@@ -1554,10 +1563,11 @@ ${this.options.guidePrompt}
       typeof options.presetMessages === "function"
         ? await options.presetMessages()
         : options.presetMessages;
-    const messages = [
+    const messages: ChatMessages = [
       ...presetMsgs,
       ...guideMessage,
       userMessage,
+      ...(progressMessage ? [progressMessage as ChatMessages[number]] : []),
       ...retryMessage,
     ];
     if (start) {
